@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebGL2 Ray Tracer (SAH BVH + glTF)</title>
+    <style>
+      :root {
+        --bg: #f7f6f2;
+        --fg: #1f2328;
+        --muted: #6b7177;
+        --accent: #2f4f4f;
+        --panel: #ffffff;
+        --border: #d5d8dc;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--fg);
+      }
+      header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+      header h1 {
+        margin: 0 0 6px 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        gap: 16px;
+        padding: 16px 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        padding: 12px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      select, input[type="file"], button {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--fg);
+        font-size: 13px;
+        font-family: inherit;
+      }
+      button {
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        margin-top: 8px;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        font-size: 12px;
+        color: var(--muted);
+        white-space: pre-wrap;
+        min-height: 60px;
+      }
+      canvas {
+        width: 100%;
+        height: 75vh;
+        border: 1px solid var(--border);
+        background: #ffffff;
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          height: 55vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>WebGL2 Ray Tracer</h1>
+      <p>CPU SAH BVH build → BVH/triangle textures → fragment shader traversal. Supports glTF (.gltf) with embedded buffers.</p>
+    </header>
+    <main>
+      <section class="panel">
+        <label for="exampleSelect">Example scene</label>
+        <select id="exampleSelect">
+          <option value="assets/triangle.gltf">Triangle</option>
+          <option value="assets/cube.gltf">Cube</option>
+          <option value="assets/Duck.gltf">Duck</option>
+        </select>
+        <button id="loadExample">Load example</button>
+
+        <div style="height: 12px"></div>
+        <label for="fileInput">Load glTF file (embedded buffers only)</label>
+        <input id="fileInput" type="file" accept=".gltf" />
+        <button id="loadFile">Load file</button>
+
+        <div style="height: 12px"></div>
+        <label>Render</label>
+        <label for="scaleSelect">Render scale</label>
+        <select id="scaleSelect">
+          <option value="1">1.0x</option>
+          <option value="0.75" selected>0.75x</option>
+          <option value="0.5">0.5x</option>
+          <option value="0.25">0.25x</option>
+        </select>
+        <label for="bruteforceToggle">Traversal mode</label>
+        <select id="bruteforceToggle">
+          <option value="bvh" selected>BVH</option>
+          <option value="bruteforce">Brute force</option>
+        </select>
+        <button id="renderBtn">Render</button>
+        <div class="status" id="status"></div>
+      </section>
+      <section class="panel">
+        <canvas id="view"></canvas>
+      </section>
+    </main>
+
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
