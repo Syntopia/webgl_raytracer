@@ -59,8 +59,13 @@ const fastScaleSelect = document.getElementById("fastScaleSelect");
 const bruteforceToggle = document.getElementById("bruteforceToggle");
 const useGltfColorToggle = document.getElementById("useGltfColor");
 const baseColorInput = document.getElementById("baseColor");
+const materialSelect = document.getElementById("materialSelect");
 const metallicInput = document.getElementById("metallic");
 const roughnessInput = document.getElementById("roughness");
+const matteSpecularInput = document.getElementById("matteSpecular");
+const matteRoughnessInput = document.getElementById("matteRoughness");
+const matteDiffuseRoughnessInput = document.getElementById("matteDiffuseRoughness");
+const wrapDiffuseInput = document.getElementById("wrapDiffuse");
 const maxBouncesInput = document.getElementById("maxBounces");
 const exposureInput = document.getElementById("exposure");
 const ambientIntensityInput = document.getElementById("ambientIntensity");
@@ -114,8 +119,13 @@ const renderState = {
   useBvh: true,
   useGltfColor: true,
   baseColor: [0.8, 0.8, 0.8],
+  materialMode: "metallic",
   metallic: 0.0,
   roughness: 0.4,
+  matteSpecular: 0.03,
+  matteRoughness: 0.5,
+  matteDiffuseRoughness: 0.5,
+  wrapDiffuse: 0.2,
   maxBounces: 2,
   maxFrames: 100,
   exposure: 1.0,
@@ -776,8 +786,13 @@ function setActiveTab(name) {
 function updateMaterialState() {
   renderState.useGltfColor = useGltfColorToggle.checked;
   renderState.baseColor = hexToRgb(baseColorInput.value);
+  renderState.materialMode = materialSelect?.value || "metallic";
   renderState.metallic = clamp(Number(metallicInput.value), 0, 1);
   renderState.roughness = clamp(Number(roughnessInput.value), 0.02, 1);
+  renderState.matteSpecular = clamp(Number(matteSpecularInput?.value ?? 0.03), 0.0, 0.08);
+  renderState.matteRoughness = clamp(Number(matteRoughnessInput?.value ?? 0.5), 0.1, 1.0);
+  renderState.matteDiffuseRoughness = clamp(Number(matteDiffuseRoughnessInput?.value ?? 0.5), 0.0, 1.0);
+  renderState.wrapDiffuse = clamp(Number(wrapDiffuseInput?.value ?? 0.2), 0.0, 0.5);
   renderState.maxBounces = clamp(Number(maxBouncesInput.value), 0, 6);
   renderState.exposure = clamp(Number(exposureInput.value), 0, 5);
   renderState.ambientIntensity = clamp(Number(ambientIntensityInput.value), 0, 2);
@@ -789,6 +804,14 @@ function updateMaterialState() {
   renderState.castShadows = shadowToggle.checked;
   renderState.toneMap = toneMapSelect?.value || "reinhard";
   resetAccumulation("Material settings updated.");
+}
+
+function updateMaterialVisibility() {
+  const mode = materialSelect?.value || "metallic";
+  const metallicGroup = document.querySelector(".material-metallic");
+  const matteGroup = document.querySelector(".material-matte");
+  if (metallicGroup) metallicGroup.style.display = mode === "metallic" ? "block" : "none";
+  if (matteGroup) matteGroup.style.display = mode === "matte" ? "block" : "none";
 }
 
 function updateRenderLimits() {
@@ -1307,6 +1330,11 @@ setTraceUniforms(gl, traceProgram, {
     envIntensity: renderState.envIntensity,
     envMaxLuminance: renderState.envMaxLuminance,
     useEnv: renderState.envUrl ? 1 : 0,
+    materialMode: renderState.materialMode,
+    matteSpecular: renderState.matteSpecular,
+    matteRoughness: renderState.matteRoughness,
+    matteDiffuseRoughness: renderState.matteDiffuseRoughness,
+    wrapDiffuse: renderState.wrapDiffuse,
     envMarginalCdfUnit: 7,
     envConditionalCdfUnit: 8,
     envSize: glState.envSize || [1, 1],
@@ -1706,9 +1734,17 @@ bruteforceToggle.addEventListener("change", () => {
 });
 
 useGltfColorToggle.addEventListener("change", updateMaterialState);
+materialSelect?.addEventListener("change", () => {
+  updateMaterialVisibility();
+  updateMaterialState();
+});
 baseColorInput.addEventListener("input", updateMaterialState);
 metallicInput.addEventListener("input", updateMaterialState);
 roughnessInput.addEventListener("input", updateMaterialState);
+matteSpecularInput?.addEventListener("input", updateMaterialState);
+matteRoughnessInput?.addEventListener("input", updateMaterialState);
+matteDiffuseRoughnessInput?.addEventListener("input", updateMaterialState);
+wrapDiffuseInput?.addEventListener("input", updateMaterialState);
 maxBouncesInput.addEventListener("input", updateMaterialState);
 exposureInput.addEventListener("input", updateMaterialState);
 toneMapSelect?.addEventListener("change", updateMaterialState);
@@ -1782,6 +1818,7 @@ loadEnvManifest().then(() => {
   }
 
   updateMaterialState();
+  updateMaterialVisibility();
   updateRenderLimits();
   updateLightState();
   updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));

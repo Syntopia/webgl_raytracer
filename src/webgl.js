@@ -63,6 +63,11 @@ uniform int uUseGltfColor;
 uniform vec3 uBaseColor;
 uniform float uMetallic;
 uniform float uRoughness;
+uniform int uMaterialMode;
+uniform float uMatteSpecular;
+uniform float uMatteRoughness;
+uniform float uMatteDiffuseRoughness;
+uniform float uWrapDiffuse;
 uniform int uMaxBounces;
 uniform float uExposure;
 uniform float uAmbientIntensity;
@@ -128,6 +133,46 @@ float maxComponent(vec3 v) {
 
 float luminance(vec3 c) {
   return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+float wrapNdotL(float ndotl, float wrap) {
+  return clamp((ndotl + wrap) / (1.0 + wrap), 0.0, 1.0);
+}
+
+vec3 orenNayarDiffuse(vec3 N, vec3 V, vec3 L, vec3 baseColor, float sigma) {
+  float NdotL = max(dot(N, L), 0.0);
+  float NdotV = max(dot(N, V), 0.0);
+  if (NdotL <= 0.0 || NdotV <= 0.0) {
+    return vec3(0.0);
+  }
+  float sigma2 = sigma * sigma;
+  float A = 1.0 - 0.5 * (sigma2 / (sigma2 + 0.33));
+  float B = 0.45 * (sigma2 / (sigma2 + 0.09));
+
+  float sinThetaL = sqrt(max(0.0, 1.0 - NdotL * NdotL));
+  float sinThetaV = sqrt(max(0.0, 1.0 - NdotV * NdotV));
+  float tanThetaL = sinThetaL / max(NdotL, 1e-4);
+  float tanThetaV = sinThetaV / max(NdotV, 1e-4);
+  float sinAlpha = max(sinThetaL, sinThetaV);
+  float tanBeta = min(tanThetaL, tanThetaV);
+
+  vec3 Lp = normalize(L - N * NdotL);
+  vec3 Vp = normalize(V - N * NdotV);
+  float cosPhi = max(0.0, dot(Lp, Vp));
+
+  float oren = A + B * cosPhi * sinAlpha * tanBeta;
+  return baseColor * oren / PI;
+}
+
+vec3 evalDiffuseBrdf(vec3 N, vec3 V, vec3 L, vec3 baseColor, float diffRough, float wrap) {
+  vec3 brdf = diffRough > 1e-4 ? orenNayarDiffuse(N, V, L, baseColor, diffRough) : (baseColor / PI);
+  if (wrap > 0.0) {
+    float ndotl = max(dot(N, L), 0.0);
+    float ndotlWrap = wrapNdotL(ndotl, wrap);
+    float scale = ndotl > 1e-4 ? (ndotlWrap / ndotl) : 0.0;
+    brdf *= scale;
+  }
+  return brdf;
 }
 
 vec3 sampleEnv(vec3 dir) {
@@ -924,6 +969,11 @@ float geometrySmith(float NdotV, float NdotL, float roughness) {
 vec3 shadeDirect(vec3 hitPos, vec3 shadingNormal, vec3 geomNormal, vec3 baseColor, vec3 V, inout uint seed) {
   vec3 direct = vec3(0.0);
   float bias = max(uRayBias, 1e-4);
+  float metallic = (uMaterialMode == 1) ? 0.0 : uMetallic;
+  float rough = (uMaterialMode == 1) ? uMatteRoughness : uRoughness;
+  float diffRough = (uMaterialMode == 1) ? uMatteDiffuseRoughness : 0.0;
+  float wrap = (uMaterialMode == 1) ? uWrapDiffuse : 0.0;
+  vec3 F0 = (uMaterialMode == 1) ? vec3(uMatteSpecular) : mix(vec3(0.04), baseColor, metallic);
   for (int i = 0; i < 3; i += 1) {
     if (uLightEnabled[i] == 0) {
       continue;
@@ -943,23 +993,22 @@ vec3 shadeDirect(vec3 hitPos, vec3 shadingNormal, vec3 geomNormal, vec3 baseColo
       }
     }
 
-    vec3 F0 = mix(vec3(0.04), baseColor, uMetallic);
     vec3 H = normalize(V + lightDir);
     float NdotV = max(dot(shadingNormal, V), 0.001);
     float NdotH = max(dot(shadingNormal, H), 0.001);
     float VdotH = max(dot(V, H), 0.001);
-    float D = distributionGGX(NdotH, uRoughness);
-    float G = geometrySmith(NdotV, NdotL, uRoughness);
+    float D = distributionGGX(NdotH, rough);
+    float G = geometrySmith(NdotV, NdotL, rough);
     vec3 F = fresnelSchlick(VdotH, F0);
     vec3 specBrdf = (D * G * F) / max(4.0 * NdotV * NdotL, 0.001);
-    vec3 diffBrdf = baseColor * (1.0 - uMetallic) / PI;
+    vec3 diffBrdf = evalDiffuseBrdf(shadingNormal, V, lightDir, baseColor, diffRough, wrap) * (1.0 - metallic);
     vec3 brdf = specBrdf + diffBrdf * (vec3(1.0) - F);
 
     float specWeight = maxComponent(F0);
-    float diffWeight = (1.0 - uMetallic) * maxComponent(baseColor);
+    float diffWeight = (1.0 - metallic) * maxComponent(baseColor);
     float sumW = specWeight + diffWeight;
     float specProb = sumW > 0.0 ? specWeight / sumW : 0.5;
-    float brdfPdfVal = brdfPdf(shadingNormal, V, lightDir, uRoughness, specProb);
+    float brdfPdfVal = brdfPdf(shadingNormal, V, lightDir, rough, specProb);
     float misWeight = powerHeuristic(lightPdf, brdfPdfVal);
 
     vec3 radiance = uLightColor[i] * uLightIntensity[i];
@@ -1069,6 +1118,12 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
     vec3 direct = shadeDirect(hitPos, shadingNormal, geomNormal, baseColor, V, seed);
     radiance += throughput * direct;
 
+    float metallic = (uMaterialMode == 1) ? 0.0 : uMetallic;
+    float rough = (uMaterialMode == 1) ? uMatteRoughness : uRoughness;
+    float diffRough = (uMaterialMode == 1) ? uMatteDiffuseRoughness : 0.0;
+    float wrap = (uMaterialMode == 1) ? uWrapDiffuse : 0.0;
+    vec3 F0 = (uMaterialMode == 1) ? vec3(uMatteSpecular) : mix(vec3(0.04), baseColor, metallic);
+
     // Next Event Estimation: Sample environment directly with MIS
     if (uUseEnv == 1) {
       float envSamplePdf;
@@ -1080,20 +1135,19 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
         bool occluded = traceAny(hitPos + geomNormal * bias, envDir, 1e20);
         if (!occluded) {
           // Evaluate BRDF for this direction
-          vec3 F0 = mix(vec3(0.04), baseColor, uMetallic);
           vec3 H = normalize(V + envDir);
           float NdotV = max(dot(shadingNormal, V), 0.001);
           float NdotH = max(dot(shadingNormal, H), 0.001);
           float VdotH = max(dot(V, H), 0.001);
 
           // Specular BRDF
-          float D = distributionGGX(NdotH, uRoughness);
-          float G = geometrySmith(NdotV, envNdotL, uRoughness);
+          float D = distributionGGX(NdotH, rough);
+          float G = geometrySmith(NdotV, envNdotL, rough);
           vec3 F = fresnelSchlick(VdotH, F0);
           vec3 specBrdf = (D * G * F) / max(4.0 * NdotV * envNdotL, 0.001);
 
           // Diffuse BRDF
-          vec3 diffBrdf = baseColor * (1.0 - uMetallic) / PI;
+          vec3 diffBrdf = evalDiffuseBrdf(shadingNormal, V, envDir, baseColor, diffRough, wrap) * (1.0 - metallic);
 
           // Combined BRDF
           vec3 brdf = specBrdf + diffBrdf * (vec3(1.0) - F);
@@ -1103,10 +1157,10 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
 
           // Compute BRDF PDF for MIS
           float specWeight = maxComponent(F0);
-          float diffWeight = (1.0 - uMetallic) * maxComponent(baseColor);
+          float diffWeight = (1.0 - metallic) * maxComponent(baseColor);
           float sumW = specWeight + diffWeight;
           float specProb = sumW > 0.0 ? specWeight / sumW : 0.5;
-          float brdfPdfVal = brdfPdf(shadingNormal, V, envDir, uRoughness, specProb);
+          float brdfPdfVal = brdfPdf(shadingNormal, V, envDir, rough, specProb);
 
           // MIS weight (environment sampling)
           float misWeight = powerHeuristic(envSamplePdf, brdfPdfVal);
@@ -1124,9 +1178,8 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
       }
     }
 
-    vec3 F0 = mix(vec3(0.04), baseColor, uMetallic);
     float specWeight = maxComponent(F0);
-    float diffWeight = (1.0 - uMetallic) * maxComponent(baseColor);
+    float diffWeight = (1.0 - metallic) * maxComponent(baseColor);
     float sum = specWeight + diffWeight;
     float specProb = sum > 0.0 ? specWeight / sum : 1.0;
     specProb = clamp(specProb, 0.0, 1.0);
@@ -1135,7 +1188,7 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
     vec3 newDir;
     float NdotL;
     if (r < specProb) {
-      vec3 H = sampleGGXHalfVector(shadingNormal, uRoughness, seed);
+      vec3 H = sampleGGXHalfVector(shadingNormal, rough, seed);
       newDir = normalize(reflect(-V, H));
       NdotL = max(dot(shadingNormal, newDir), 0.0);
       if (NdotL <= 0.0) {
@@ -1144,20 +1197,20 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
       float NdotV = max(dot(shadingNormal, V), 0.001);
       float NdotH = max(dot(shadingNormal, H), 0.001);
       float VdotH = max(dot(V, H), 0.001);
-      float G = geometrySmith(NdotV, NdotL, uRoughness);
+      float G = geometrySmith(NdotV, NdotL, rough);
       vec3 F = fresnelSchlick(VdotH, F0);
       // Simplified importance sampling weight for GGX: G * F * VdotH / (NdotV * NdotH)
       vec3 weight = G * F * VdotH / (NdotV * NdotH * max(specProb, 0.01));
       throughput *= weight;
 
       // Store BRDF PDF for MIS when hitting environment
-      float D = distributionGGX(NdotH, uRoughness);
+      float D = distributionGGX(NdotH, rough);
       lastBrdfPdf = specProb * D * NdotH / (4.0 * VdotH);
     } else {
       newDir = cosineSampleHemisphere(shadingNormal, seed);
       NdotL = max(dot(shadingNormal, newDir), 0.0);
-      vec3 diffuseColor = baseColor * (1.0 - uMetallic);
-      throughput *= diffuseColor / max(1.0 - specProb, 0.01);
+      vec3 diffBrdf = evalDiffuseBrdf(shadingNormal, V, newDir, baseColor, diffRough, wrap) * (1.0 - metallic);
+      throughput *= diffBrdf * PI / max(1.0 - specProb, 0.01);
 
       // Store BRDF PDF for MIS
       lastBrdfPdf = (1.0 - specProb) * NdotL / PI;
@@ -1490,6 +1543,12 @@ export function setTraceUniforms(gl, program, uniforms) {
   gl.uniform3fv(gl.getUniformLocation(program, "uBaseColor"), uniforms.baseColor);
   gl.uniform1f(gl.getUniformLocation(program, "uMetallic"), uniforms.metallic);
   gl.uniform1f(gl.getUniformLocation(program, "uRoughness"), uniforms.roughness);
+  const materialMode = uniforms.materialMode === "matte" || uniforms.materialMode === 1 ? 1 : 0;
+  gl.uniform1i(gl.getUniformLocation(program, "uMaterialMode"), materialMode);
+  gl.uniform1f(gl.getUniformLocation(program, "uMatteSpecular"), uniforms.matteSpecular ?? 0.03);
+  gl.uniform1f(gl.getUniformLocation(program, "uMatteRoughness"), uniforms.matteRoughness ?? 0.5);
+  gl.uniform1f(gl.getUniformLocation(program, "uMatteDiffuseRoughness"), uniforms.matteDiffuseRoughness ?? 0.5);
+  gl.uniform1f(gl.getUniformLocation(program, "uWrapDiffuse"), uniforms.wrapDiffuse ?? 0.2);
   gl.uniform1i(gl.getUniformLocation(program, "uMaxBounces"), uniforms.maxBounces);
   gl.uniform1f(gl.getUniformLocation(program, "uExposure"), uniforms.exposure);
   gl.uniform1f(gl.getUniformLocation(program, "uAmbientIntensity"), uniforms.ambientIntensity);

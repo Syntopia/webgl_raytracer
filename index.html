@@ -767,28 +767,82 @@
                 <label for="useGltfColor">Use imported colors</label>
               </div>
 
+              <label for="materialSelect">Material</label>
+              <select id="materialSelect">
+                <option value="metallic" selected>Metallic (PBR)</option>
+                <option value="matte">Matte Protein</option>
+              </select>
+
               <label for="baseColor">Base color (override)</label>
               <input id="baseColor" type="color" value="#cccccc" />
 
-              <div style="height: 12px"></div>
-              <label for="metallic">Metallic</label>
-              <div class="slider-input">
-                <input id="metallic" type="range" min="0" max="1" step="0.01" value="0" />
-                <input type="text" class="value-input" data-for="metallic" value="0.00" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="metallic">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="metallic">◀</button>
+              <div class="material-metallic">
+                <div style="height: 12px"></div>
+                <label for="metallic">Metallic</label>
+                <div class="slider-input">
+                  <input id="metallic" type="range" min="0" max="1" step="0.01" value="0" />
+                  <input type="text" class="value-input" data-for="metallic" value="0.00" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="metallic">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="metallic">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="roughness">Roughness</label>
+                <div class="slider-input">
+                  <input id="roughness" type="range" min="0.04" max="1" step="0.01" value="0.4" />
+                  <input type="text" class="value-input" data-for="roughness" value="0.40" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="roughness">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="roughness">◀</button>
+                  </div>
                 </div>
               </div>
 
-              <div style="height: 8px"></div>
-              <label for="roughness">Roughness</label>
-              <div class="slider-input">
-                <input id="roughness" type="range" min="0.04" max="1" step="0.01" value="0.4" />
-                <input type="text" class="value-input" data-for="roughness" value="0.40" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="roughness">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="roughness">◀</button>
+              <div class="material-matte">
+                <div style="height: 12px"></div>
+                <label for="matteSpecular">Specular (F0)</label>
+                <div class="slider-input">
+                  <input id="matteSpecular" type="range" min="0.00" max="0.08" step="0.005" value="0.03" />
+                  <input type="text" class="value-input" data-for="matteSpecular" value="0.03" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="matteSpecular">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="matteSpecular">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="matteRoughness">Specular roughness</label>
+                <div class="slider-input">
+                  <input id="matteRoughness" type="range" min="0.1" max="1" step="0.01" value="0.5" />
+                  <input type="text" class="value-input" data-for="matteRoughness" value="0.50" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="matteRoughness">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="matteRoughness">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="matteDiffuseRoughness">Diffuse roughness (Oren–Nayar)</label>
+                <div class="slider-input">
+                  <input id="matteDiffuseRoughness" type="range" min="0" max="1" step="0.05" value="0.5" />
+                  <input type="text" class="value-input" data-for="matteDiffuseRoughness" value="0.50" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="matteDiffuseRoughness">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="matteDiffuseRoughness">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="wrapDiffuse">Wrap diffuse</label>
+                <div class="slider-input">
+                  <input id="wrapDiffuse" type="range" min="0" max="0.5" step="0.01" value="0.2" />
+                  <input type="text" class="value-input" data-for="wrapDiffuse" value="0.20" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="wrapDiffuse">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="wrapDiffuse">◀</button>
+                  </div>
                 </div>
               </div>
             </div>
