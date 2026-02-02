@@ -3,67 +3,100 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>WebGL2 Ray Tracer (SAH BVH + glTF)</title>
+    <title>WebGL2 Ray Tracer</title>
     <style>
       :root {
-        --bg: #f7f6f2;
-        --fg: #1f2328;
-        --muted: #6b7177;
-        --accent: #2f4f4f;
-        --panel: #ffffff;
-        --border: #d5d8dc;
+        --bg: #1a1a1e;
+        --bg-secondary: #242428;
+        --fg: #e4e4e7;
+        --fg-muted: #a1a1aa;
+        --accent: #6366f1;
+        --accent-hover: #818cf8;
+        --panel: #27272a;
+        --border: #3f3f46;
+        --input-bg: #18181b;
+        --radius: 8px;
+        --radius-sm: 4px;
+        --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: var(--bg);
         color: var(--fg);
-      }
-      header {
-        padding: 16px 20px;
-        border-bottom: 1px solid var(--border);
-        background: var(--panel);
-      }
-      header h1 {
-        margin: 0 0 6px 0;
-        font-size: 18px;
-        font-weight: 600;
-      }
-      header p {
-        margin: 0;
-        color: var(--muted);
         font-size: 13px;
+        line-height: 1.5;
       }
-      main {
-        display: grid;
-        grid-template-columns: 320px 1fr;
-        gap: 16px;
-        padding: 16px 20px;
+
+      /* Layout */
+      .app {
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
       }
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        padding: 12px;
+
+      /* Sidebar */
+      .sidebar {
+        width: 340px;
+        background: var(--bg-secondary);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
       }
+      .sidebar-header {
+        padding: 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      .sidebar-header h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+      .sidebar-header p {
+        margin: 4px 0 0;
+        font-size: 11px;
+        color: var(--fg-muted);
+      }
+      .sidebar-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0 12px 12px;
+      }
+
+      /* Tabs */
       .tabs {
         display: flex;
-        gap: 6px;
-        margin-bottom: 10px;
+        gap: 2px;
+        padding: 12px 0;
+        position: sticky;
+        top: 0;
+        background: var(--bg-secondary);
+        z-index: 10;
       }
       .tab-button {
         flex: 1;
-        padding: 6px 8px;
-        border: 1px solid var(--border);
-        background: #fff;
-        color: var(--fg);
-        font-size: 12px;
+        padding: 8px 4px;
+        border: none;
+        background: transparent;
+        color: var(--fg-muted);
+        font-size: 11px;
+        font-weight: 500;
         cursor: pointer;
+        border-radius: var(--radius-sm);
+        transition: all 0.15s ease;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .tab-button:hover {
+        background: var(--panel);
+        color: var(--fg);
       }
       .tab-button.active {
-        background: #f0f2f4;
-        border-color: #c7cbd1;
-        font-weight: 600;
+        background: var(--accent);
+        color: #fff;
       }
       .tab-panel {
         display: none;
@@ -71,180 +104,911 @@
       .tab-panel.active {
         display: block;
       }
+
+      /* Form controls */
+      .form-group {
+        margin-bottom: 16px;
+      }
+      .form-group-label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--fg-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 8px;
+      }
+      .form-section {
+        background: var(--panel);
+        border-radius: var(--radius);
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .form-section-title {
+        font-size: 12px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--fg);
+      }
+
       label {
         display: block;
         font-size: 12px;
-        color: var(--muted);
-        margin-bottom: 6px;
+        color: var(--fg-muted);
+        margin-bottom: 4px;
       }
-      select, input[type="file"], button {
+
+      select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--input-bg);
+        color: var(--fg);
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+      }
+      select:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      select optgroup {
+        font-weight: 600;
+        color: var(--fg-muted);
+      }
+
+      input[type="file"] {
         width: 100%;
         padding: 8px 10px;
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--input-bg);
+        color: var(--fg);
+        font-size: 12px;
+        font-family: inherit;
+        cursor: pointer;
+      }
+      input[type="file"]::file-selector-button {
+        padding: 4px 10px;
+        border: none;
+        border-radius: var(--radius-sm);
+        background: var(--panel);
+        color: var(--fg);
+        font-size: 11px;
+        cursor: pointer;
+        margin-right: 8px;
+      }
+
+      input[type="color"] {
+        width: 100%;
+        height: 36px;
         border: 1px solid var(--border);
-        background: #fff;
+        border-radius: var(--radius-sm);
+        background: var(--input-bg);
+        cursor: pointer;
+        padding: 2px;
+      }
+
+      input[type="text"], input[type="number"] {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--input-bg);
         color: var(--fg);
         font-size: 13px;
         font-family: inherit;
       }
+      input[type="text"]:focus, input[type="number"]:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+
+      /* Checkbox */
+      .checkbox-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .checkbox-group input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+        cursor: pointer;
+      }
+      .checkbox-group label {
+        margin: 0;
+        cursor: pointer;
+        font-size: 13px;
+        color: var(--fg);
+      }
+
+      /* Slider with input component */
+      .slider-input {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: transparent;
+        border: none;
+        padding: 0;
+      }
+      .slider-input input[type="range"] {
+        flex: 1;
+        height: 14px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        border-radius: 2px;
+        cursor: pointer;
+        padding: 0;
+      }
+      .slider-input input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--accent);
+        cursor: pointer;
+        border: 2px solid var(--bg);
+        margin-top: -5px;
+      }
+      .slider-input input[type="range"]::-webkit-slider-runnable-track {
+        height: 4px;
+        background: var(--border);
+        border-radius: 2px;
+      }
+      .slider-input input[type="range"]:hover::-webkit-slider-runnable-track {
+        background: var(--fg-muted);
+      }
+      .slider-input input[type="range"]:hover::-webkit-slider-thumb {
+        background: var(--accent-hover);
+      }
+      .slider-input input[type="range"]::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--accent);
+        cursor: pointer;
+        border: 2px solid var(--bg);
+      }
+      .slider-input input[type="range"]::-moz-range-track {
+        height: 4px;
+        background: var(--border);
+        border-radius: 2px;
+      }
+      .slider-input input[type="range"]:hover::-moz-range-track {
+        background: var(--fg-muted);
+      }
+      .slider-input input[type="range"]:hover::-moz-range-thumb {
+        background: var(--accent-hover);
+      }
+      .slider-input .value-input {
+        width: 60px;
+        padding: 4px 6px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg-secondary);
+        color: var(--fg);
+        font-size: 12px;
+        text-align: center;
+        font-family: "SF Mono", Monaco, monospace;
+      }
+      .slider-input .value-input:hover {
+        border-color: var(--accent);
+        background: var(--input-bg);
+      }
+      .slider-input .value-input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .slider-input .step-buttons {
+        display: flex;
+        flex-direction: row;
+        gap: 2px;
+      }
+      .slider-input .step-btn {
+        width: 18px;
+        height: 18px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        color: var(--fg-muted);
+        font-size: 10px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+      .slider-input .step-btn[data-action="down"] {
+        order: 0;
+        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      }
+      .slider-input .step-btn[data-action="up"] {
+        order: 1;
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+      .slider-input .step-btn:hover {
+        background: var(--border);
+        color: var(--fg);
+      }
+
+      /* Buttons */
       button {
+        width: 100%;
+        padding: 10px 16px;
+        border: none;
+        border-radius: var(--radius-sm);
         background: var(--accent);
         color: #fff;
-        border: none;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
         cursor: pointer;
+        transition: background 0.15s ease;
         margin-top: 8px;
       }
+      button:hover {
+        background: var(--accent-hover);
+      }
       button:disabled {
-        opacity: 0.6;
+        opacity: 0.5;
         cursor: not-allowed;
       }
+      button.secondary {
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--border);
+      }
+      button.secondary:hover {
+        background: var(--border);
+      }
+
+      /* Status */
       .status {
-        font-size: 12px;
-        color: var(--muted);
+        font-size: 11px;
+        color: var(--fg-muted);
         white-space: pre-wrap;
-        min-height: 60px;
+        min-height: 40px;
+        background: var(--input-bg);
+        border-radius: var(--radius-sm);
+        padding: 8px 10px;
+        font-family: "SF Mono", Monaco, monospace;
+        line-height: 1.4;
+      }
+
+      /* Divider */
+      .divider {
+        height: 1px;
+        background: var(--border);
+        margin: 16px 0;
+      }
+
+      /* Canvas area */
+      .canvas-container {
+        flex: 1;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        position: relative;
       }
       canvas {
-        width: 100%;
-        height: 75vh;
-        border: 1px solid var(--border);
-        background: #ffffff;
+        flex: 1;
+        border-radius: var(--radius);
+        background: #0a0a0a;
+        box-shadow: var(--shadow);
       }
+      .render-overlay {
+        position: absolute;
+        top: 24px;
+        right: 24px;
+        padding: 6px 10px;
+        border-radius: var(--radius-sm);
+        background: rgba(0, 0, 0, 0.55);
+        color: #e5e7eb;
+        font-size: 12px;
+        font-family: "SF Mono", Monaco, monospace;
+        pointer-events: none;
+        display: none;
+        white-space: nowrap;
+      }
+      .loading-overlay {
+        position: absolute;
+        top: 24px;
+        left: 24px;
+        padding: 6px 10px;
+        border-radius: var(--radius-sm);
+        background: rgba(0, 0, 0, 0.55);
+        color: #e5e7eb;
+        font-size: 12px;
+        font-family: "SF Mono", Monaco, monospace;
+        pointer-events: none;
+        display: none;
+        white-space: nowrap;
+      }
+
+      /* Inline flex row */
+      .flex-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+      }
+      .flex-row > * {
+        flex: 1;
+      }
+      .flex-row > button {
+        flex: none;
+        width: auto;
+        margin-top: 0;
+        align-self: flex-end;
+      }
+
+      /* Responsive */
       @media (max-width: 900px) {
-        main {
-          grid-template-columns: 1fr;
+        .app {
+          flex-direction: column;
+          height: auto;
         }
-        canvas {
-          height: 55vh;
+        .sidebar {
+          width: 100%;
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+        .sidebar-content {
+          max-height: 50vh;
+        }
+        .canvas-container {
+          height: 60vh;
         }
       }
     </style>
   </head>
   <body>
-    <header>
-      <h1>WebGL2 Ray Tracer</h1>
-      <p>CPU SAH BVH build → BVH/triangle textures → fragment shader traversal. Supports glTF (.gltf) with embedded buffers.</p>
-    </header>
-    <main>
-      <section class="panel">
-        <div class="tabs" role="tablist">
-          <button class="tab-button active" data-tab-button="tracing" type="button">Tracing</button>
-          <button class="tab-button" data-tab-button="material" type="button">Material</button>
-          <button class="tab-button" data-tab-button="lights" type="button">Light Sources</button>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <h1>WebGL2 Ray Tracer</h1>
+          <p>SAH BVH + fragment shader traversal</p>
         </div>
 
-        <div class="tab-panel active" data-tab-panel="tracing">
-          <label for="exampleSelect">Example scene</label>
-          <select id="exampleSelect">
-            <option value="assets/triangle.gltf">Triangle</option>
-            <option value="assets/cube.gltf">Cube</option>
-            <option value="assets/overlap_boxes.gltf">Overlap Boxes</option>
-            <option value="assets/Duck.gltf">Duck</option>
-          </select>
-          <button id="loadExample">Load example</button>
+        <div class="sidebar-content">
+          <div class="tabs" role="tablist">
+            <button class="tab-button active" data-tab-button="scene" type="button">Scene</button>
+            <button class="tab-button" data-tab-button="render" type="button">Render</button>
+            <button class="tab-button" data-tab-button="material" type="button">Material</button>
+            <button class="tab-button" data-tab-button="lights" type="button">Lights</button>
+          </div>
 
-          <div style="height: 12px"></div>
-          <label for="envSelect">Environment</label>
-          <select id="envSelect">
-            <option value="">None</option>
-            <option value="assets/env/studio_small_01_1k.hdr" selected>Studio Small 01 (Poly Haven)</option>
-            <option value="assets/env/kloofendal_overcast_1k.hdr">Kloofendal Overcast (Poly Haven)</option>
-          </select>
-          <label for="envIntensity">Environment intensity</label>
-          <input id="envIntensity" type="range" min="0" max="5" step="0.05" value="1" />
+          <!-- SCENE TAB -->
+          <div class="tab-panel active" data-tab-panel="scene">
+            <div class="form-section">
+              <div class="form-section-title">Load Example</div>
 
-          <div style="height: 12px"></div>
-          <label for="fileInput">Load glTF file (embedded buffers only)</label>
-          <input id="fileInput" type="file" accept=".gltf" />
-          <button id="loadFile">Load file</button>
+              <label for="exampleSelect">Select scene or molecule</label>
+              <select id="exampleSelect">
+                <optgroup label="3D Models (glTF)">
+                  <option value="assets/triangle.gltf">Triangle</option>
+                  <option value="assets/cube.gltf">Cube</option>
+                  <option value="assets/overlap_boxes.gltf">Overlap Boxes</option>
+                  <option value="assets/Duck.gltf">Duck</option>
+                  <option value="assets/ABeautifulGame.gltf">A Beautiful Game</option>
+                </optgroup>
+                <optgroup label="Test Primitives">
+                  <option value="__test_primitives__">Spheres + Cylinders</option>
+                  <option value="__test_1000_spheres__">1000 Random Spheres</option>
+                  <option value="__test_10000_spheres__">10000 Random Spheres</option>
+                </optgroup>
+                <optgroup label="Small Molecules (SDF)">
+                  <option value="mol:caffeine">Caffeine</option>
+                  <option value="mol:aspirin">Aspirin</option>
+                  <option value="mol:ibuprofen">Ibuprofen</option>
+                  <option value="mol:benzene">Benzene</option>
+                  <option value="mol:ethanol">Ethanol</option>
+                  <option value="mol:glucose">Glucose</option>
+                </optgroup>
+                <optgroup label="Proteins (PDB)">
+                  <option value="pdb:1CRN">Crambin (1CRN)</option>
+                  <option value="pdb:1HVR">HIV Protease (1HVR)</option>
+                  <option value="pdb:1STP" selected>Streptavidin (1STP)</option>
+                  <option value="pdb:2POR">Porin (2POR)</option>
+                  <option value="pdb:1BNA">DNA B-form (1BNA)</option>
+                  <option value="pdb:1GZX">Hemoglobin (1GZX)</option>
+                </optgroup>
+              </select>
+              <button id="loadExample">Load</button>
+            </div>
 
-          <div style="height: 12px"></div>
-          <label>Render</label>
-          <label for="scaleSelect">Render scale</label>
-          <select id="scaleSelect">
-            <option value="1">1.0x</option>
-            <option value="0.75" selected>0.75x</option>
-            <option value="0.5">0.5x</option>
-            <option value="0.25">0.25x</option>
-          </select>
-          <label for="bruteforceToggle">Traversal mode</label>
-          <select id="bruteforceToggle">
-            <option value="bvh" selected>BVH</option>
-            <option value="bruteforce">Brute force</option>
-          </select>
-          <label for="maxBounces">Max bounces</label>
-          <input id="maxBounces" type="range" min="0" max="6" step="1" value="2" />
-          <label for="exposure">Exposure</label>
-          <input id="exposure" type="range" min="0" max="5" step="0.05" value="1" />
-          <label for="rayBias">Ray bias (units)</label>
-          <input id="rayBias" type="number" min="0" step="0.000001" value="0.00001" />
-          <label for="tMin">tMin (units)</label>
-          <input id="tMin" type="number" min="0" step="0.000001" value="0.00001" />
-          <label for="samplesPerBounce">Samples per pixel</label>
-          <input id="samplesPerBounce" type="range" min="1" max="8" step="1" value="2" />
-          <button id="renderBtn">Render</button>
-          <div class="status" id="status"></div>
+            <div class="form-section">
+              <div class="form-section-title">Import Files</div>
+
+              <label for="fileInput">glTF model</label>
+              <input id="fileInput" type="file" accept=".gltf" />
+
+              <div style="height: 8px"></div>
+              <label for="molFileInput">Molecular file (PDB/SDF/MOL)</label>
+              <input id="molFileInput" type="file" accept=".pdb,.sdf,.mol" />
+
+              <div style="height: 8px"></div>
+              <div class="flex-row">
+                <div>
+                  <label for="pdbIdInput">Fetch PDB by ID</label>
+                  <input id="pdbIdInput" type="text" placeholder="e.g., 1CRN" />
+                </div>
+                <button id="loadPdbId" class="secondary">Fetch</button>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">Molecular Display</div>
+
+              <label for="pdbDisplayStyle">Display style</label>
+              <select id="pdbDisplayStyle">
+                <option value="ball-and-stick" selected>Ball and Stick</option>
+                <option value="vdw">Van der Waals (Space-filling)</option>
+                <option value="stick">Stick only</option>
+              </select>
+
+              <div style="height: 12px"></div>
+              <label for="pdbAtomScale">Atom radius scale</label>
+              <div class="slider-input">
+                <input id="pdbAtomScale" type="range" min="0.1" max="1.5" step="0.05" value="1.0" />
+                <input type="text" class="value-input" data-for="pdbAtomScale" value="1.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="pdbAtomScale">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="pdbAtomScale">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="pdbBondRadius">Bond radius</label>
+              <div class="slider-input">
+                <input id="pdbBondRadius" type="range" min="0.05" max="0.3" step="0.01" value="0.12" />
+                <input type="text" class="value-input" data-for="pdbBondRadius" value="0.12" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="pdbBondRadius">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="pdbBondRadius">◀</button>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="checkbox-group">
+                <input id="showSurface" type="checkbox" />
+                <label for="showSurface">Show molecular surface (SES)</label>
+              </div>
+
+              <label for="probeRadius">Probe radius (Å)</label>
+              <div class="slider-input">
+                <input id="probeRadius" type="range" min="0.5" max="3.0" step="0.1" value="1.4" />
+                <input type="text" class="value-input" data-for="probeRadius" value="1.4" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="probeRadius">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="probeRadius">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="surfaceResolution">Surface resolution (Å)</label>
+              <div class="slider-input">
+                <input id="surfaceResolution" type="range" min="0.1" max="1.5" step="0.05" value="0.25" />
+                <input type="text" class="value-input" data-for="surfaceResolution" value="0.25" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="surfaceResolution">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="surfaceResolution">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <div class="checkbox-group">
+                <input id="smoothNormals" type="checkbox" />
+                <label for="smoothNormals">Smooth surface normals</label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">Status</div>
+              <div class="status" id="status">Ready</div>
+            </div>
+          </div>
+
+          <!-- RENDER TAB -->
+          <div class="tab-panel" data-tab-panel="render">
+            <div class="form-section">
+              <div class="form-section-title">Environment</div>
+
+              <label for="envSelect">Environment map</label>
+              <select id="envSelect">
+                <option value="">None</option>
+                <!-- Populated dynamically from assets/env/manifest.json -->
+              </select>
+
+              <div style="height: 12px"></div>
+              <label for="envIntensity">Environment intensity</label>
+              <div class="slider-input">
+                <input id="envIntensity" type="range" min="0" max="5" step="0.05" value="1" />
+                <input type="text" class="value-input" data-for="envIntensity" value="1.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="envIntensity">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="envIntensity">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="envMaxLum">Max luminance (firefly reduction)</label>
+              <div class="slider-input">
+                <input id="envMaxLum" type="range" min="1" max="200" step="1" value="200" />
+                <input type="text" class="value-input" data-for="envMaxLum" value="200" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="envMaxLum">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="envMaxLum">◀</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">Quality</div>
+
+              <label for="scaleSelect">Render scale</label>
+              <select id="scaleSelect">
+                <option value="1" selected>1.0x (Full)</option>
+                <option value="0.75">0.75x</option>
+                <option value="0.5">0.5x</option>
+                <option value="0.25">0.25x (Fast)</option>
+              </select>
+
+              <div style="height: 12px"></div>
+              <label for="fastScaleSelect">Fast render scale (while moving)</label>
+              <select id="fastScaleSelect">
+                <option value="1">1.0x</option>
+                <option value="0.75">0.75x</option>
+                <option value="0.5">0.5x</option>
+                <option value="0.25" selected>0.25x (Fast)</option>
+              </select>
+
+              <div style="height: 12px"></div>
+              <label for="bruteforceToggle">Traversal mode</label>
+              <select id="bruteforceToggle">
+                <option value="bvh" selected>BVH (Fast)</option>
+                <option value="bruteforce">Brute force</option>
+              </select>
+
+              <div style="height: 12px"></div>
+              <label for="maxBounces">Max bounces</label>
+              <div class="slider-input">
+                <input id="maxBounces" type="range" min="0" max="6" step="1" value="2" />
+                <input type="text" class="value-input" data-for="maxBounces" value="2" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="maxBounces">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="maxBounces">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="samplesPerBounce">Samples per pixel</label>
+              <div class="slider-input">
+                <input id="samplesPerBounce" type="range" min="1" max="8" step="1" value="1" />
+                <input type="text" class="value-input" data-for="samplesPerBounce" value="1" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="samplesPerBounce">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="samplesPerBounce">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="maxFrames">Max frames (0 = unlimited)</label>
+              <div class="slider-input">
+                <input id="maxFrames" type="range" min="0" max="2000" step="1" value="100" />
+                <input type="text" class="value-input" data-for="maxFrames" value="100" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="maxFrames">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="maxFrames">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="exposure">Exposure</label>
+              <div class="slider-input">
+                <input id="exposure" type="range" min="0" max="5" step="0.05" value="1" />
+                <input type="text" class="value-input" data-for="exposure" value="1.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="exposure">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="exposure">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="toneMapSelect">Tone mapping</label>
+              <select id="toneMapSelect">
+                <option value="reinhard">Reinhard</option>
+                <option value="aces" selected>Filmic (ACES)</option>
+                <option value="linear">Linear</option>
+              </select>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">Advanced</div>
+
+              <label for="rayBias">Ray bias</label>
+              <input id="rayBias" type="number" min="0" step="0.000001" value="0.00001" />
+
+              <div style="height: 8px"></div>
+              <label for="tMin">tMin</label>
+              <input id="tMin" type="number" min="0" step="0.000001" value="0.00001" />
+            </div>
+
+            <button id="renderBtn">Render Frame</button>
+
+            <div class="form-section">
+              <div class="form-section-title">Debug Visualization</div>
+
+              <label for="visModeSelect">Visualization mode</label>
+              <select id="visModeSelect">
+                <option value="0" selected>Normal (Path Tracing)</option>
+                <option value="1">Surface Normals</option>
+                <option value="2">BVH Traversal Cost</option>
+                <option value="3">Depth</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- MATERIAL TAB -->
+          <div class="tab-panel" data-tab-panel="material">
+            <div class="form-section">
+              <div class="form-section-title">Material Properties</div>
+
+              <div class="checkbox-group">
+                <input id="useGltfColor" type="checkbox" checked />
+                <label for="useGltfColor">Use imported colors</label>
+              </div>
+
+              <label for="baseColor">Base color (override)</label>
+              <input id="baseColor" type="color" value="#cccccc" />
+
+              <div style="height: 12px"></div>
+              <label for="metallic">Metallic</label>
+              <div class="slider-input">
+                <input id="metallic" type="range" min="0" max="1" step="0.01" value="0" />
+                <input type="text" class="value-input" data-for="metallic" value="0.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="metallic">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="metallic">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="roughness">Roughness</label>
+              <div class="slider-input">
+                <input id="roughness" type="range" min="0.04" max="1" step="0.01" value="0.4" />
+                <input type="text" class="value-input" data-for="roughness" value="0.40" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="roughness">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="roughness">◀</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- LIGHTS TAB -->
+          <div class="tab-panel" data-tab-panel="lights">
+            <div class="form-section">
+              <div class="form-section-title">Ambient Light</div>
+
+              <label for="ambientIntensity">Intensity</label>
+              <div class="slider-input">
+                <input id="ambientIntensity" type="range" min="0" max="2" step="0.05" value="0" />
+                <input type="text" class="value-input" data-for="ambientIntensity" value="0.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="ambientIntensity">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="ambientIntensity">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="ambientColor">Color</label>
+              <input id="ambientColor" type="color" value="#ffffff" />
+
+              <div style="height: 8px"></div>
+              <div class="checkbox-group">
+                <input id="shadowToggle" type="checkbox" checked />
+                <label for="shadowToggle">Cast shadows</label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">
+                <div class="checkbox-group" style="margin-bottom:0">
+                  <input id="light1Enable" type="checkbox" checked />
+                  <label for="light1Enable">Key Light (camera-relative)</label>
+                </div>
+              </div>
+
+              <label for="light1Azimuth">Azimuth</label>
+              <div class="slider-input">
+                <input id="light1Azimuth" type="range" min="-180" max="180" step="1" value="-40" />
+                <input type="text" class="value-input" data-for="light1Azimuth" value="-40" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light1Azimuth">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light1Azimuth">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light1Elevation">Elevation</label>
+              <div class="slider-input">
+                <input id="light1Elevation" type="range" min="-85" max="85" step="1" value="-30" />
+                <input type="text" class="value-input" data-for="light1Elevation" value="-30" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light1Elevation">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light1Elevation">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light1Intensity">Intensity</label>
+              <div class="slider-input">
+                <input id="light1Intensity" type="range" min="0" max="20" step="0.05" value="5.0" />
+                <input type="text" class="value-input" data-for="light1Intensity" value="5.00" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light1Intensity">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light1Intensity">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light1Extent">Extent angle (degrees)</label>
+              <div class="slider-input">
+                <input id="light1Extent" type="range" min="0" max="60" step="1" value="22" />
+                <input type="text" class="value-input" data-for="light1Extent" value="22" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light1Extent">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light1Extent">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light1Color">Color</label>
+              <input id="light1Color" type="color" value="#ffffff" />
+            </div>
+
+            <div class="form-section">
+              <div class="form-section-title">
+                <div class="checkbox-group" style="margin-bottom:0">
+                  <input id="light2Enable" type="checkbox" checked />
+                  <label for="light2Enable">Fill Light (camera-relative)</label>
+                </div>
+              </div>
+
+              <label for="light2Azimuth">Azimuth</label>
+              <div class="slider-input">
+                <input id="light2Azimuth" type="range" min="-180" max="180" step="1" value="40" />
+                <input type="text" class="value-input" data-for="light2Azimuth" value="40" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light2Azimuth">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light2Azimuth">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light2Elevation">Elevation</label>
+              <div class="slider-input">
+                <input id="light2Elevation" type="range" min="-85" max="85" step="1" value="0" />
+                <input type="text" class="value-input" data-for="light2Elevation" value="0" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light2Elevation">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light2Elevation">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light2Intensity">Intensity</label>
+              <div class="slider-input">
+                <input id="light2Intensity" type="range" min="0" max="20" step="0.05" value="0.6" />
+                <input type="text" class="value-input" data-for="light2Intensity" value="0.60" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light2Intensity">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light2Intensity">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light2Extent">Extent angle (degrees)</label>
+              <div class="slider-input">
+                <input id="light2Extent" type="range" min="0" max="60" step="1" value="50" />
+                <input type="text" class="value-input" data-for="light2Extent" value="50" />
+                <div class="step-buttons">
+                  <button type="button" class="step-btn" data-action="up" data-for="light2Extent">▶</button>
+                  <button type="button" class="step-btn" data-action="down" data-for="light2Extent">◀</button>
+                </div>
+              </div>
+
+              <div style="height: 8px"></div>
+              <label for="light2Color">Color</label>
+              <input id="light2Color" type="color" value="#ffffff" />
+            </div>
+          </div>
         </div>
+      </aside>
 
-        <div class="tab-panel" data-tab-panel="material">
-          <label for="useGltfColor">Material</label>
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input id="useGltfColor" type="checkbox" checked />
-            Use glTF base colors
-          </label>
-          <label for="baseColor">Base color</label>
-          <input id="baseColor" type="color" value="#cccccc" />
-          <label for="metallic">Metallic</label>
-          <input id="metallic" type="range" min="0" max="1" step="0.01" value="0" />
-          <label for="roughness">Roughness</label>
-          <input id="roughness" type="range" min="0.04" max="1" step="0.01" value="0.4" />
-        </div>
-
-        <div class="tab-panel" data-tab-panel="lights">
-          <label for="ambientIntensity">Ambient intensity</label>
-          <input id="ambientIntensity" type="range" min="0" max="2" step="0.05" value="0" />
-          <label for="ambientColor">Ambient color</label>
-          <input id="ambientColor" type="color" value="#ffffff" />
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input id="shadowToggle" type="checkbox" checked />
-            Cast shadows
-          </label>
-
-          <div style="height: 12px"></div>
-          <label>Directional light 1</label>
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input id="light1Enable" type="checkbox" checked />
-            Enabled
-          </label>
-          <label for="light1Azimuth">Azimuth</label>
-          <input id="light1Azimuth" type="range" min="-180" max="180" step="1" value="45" />
-          <label for="light1Elevation">Elevation</label>
-          <input id="light1Elevation" type="range" min="-85" max="85" step="1" value="35" />
-          <label for="light1Intensity">Intensity</label>
-          <input id="light1Intensity" type="range" min="0" max="5" step="0.05" value="1.5" />
-          <label for="light1Color">Color</label>
-          <input id="light1Color" type="color" value="#ffffff" />
-
-          <div style="height: 12px"></div>
-          <label>Directional light 2</label>
-          <label style="display:flex; align-items:center; gap:8px;">
-            <input id="light2Enable" type="checkbox" />
-            Enabled
-          </label>
-          <label for="light2Azimuth">Azimuth</label>
-          <input id="light2Azimuth" type="range" min="-180" max="180" step="1" value="-35" />
-          <label for="light2Elevation">Elevation</label>
-          <input id="light2Elevation" type="range" min="-85" max="85" step="1" value="15" />
-          <label for="light2Intensity">Intensity</label>
-          <input id="light2Intensity" type="range" min="0" max="5" step="0.05" value="0.6" />
-          <label for="light2Color">Color</label>
-          <input id="light2Color" type="color" value="#ffffff" />
-        </div>
-      </section>
-      <section class="panel">
+      <main class="canvas-container">
         <canvas id="view"></canvas>
-      </section>
-    </main>
+        <div class="render-overlay" id="renderOverlay"></div>
+        <div class="loading-overlay" id="loadingOverlay">Loading...</div>
+      </main>
+    </div>
 
+    <script>
+      // Initialize slider-input components
+      document.addEventListener('DOMContentLoaded', () => {
+        // Tab switching
+        document.querySelectorAll('.tab-button').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const tabName = btn.dataset.tabButton;
+            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelector(`[data-tab-panel="${tabName}"]`).classList.add('active');
+          });
+        });
+
+        // Slider-input sync
+        document.querySelectorAll('.slider-input').forEach(container => {
+          const slider = container.querySelector('input[type="range"]');
+          const valueInput = container.querySelector('.value-input');
+          const stepBtns = container.querySelectorAll('.step-btn');
+
+          if (!slider || !valueInput) return;
+
+          const formatValue = (val) => {
+            const step = parseFloat(slider.step) || 1;
+            const decimals = step < 1 ? Math.max(0, -Math.floor(Math.log10(step))) : 0;
+            return parseFloat(val).toFixed(decimals);
+          };
+
+          // Slider → input
+          slider.addEventListener('input', () => {
+            valueInput.value = formatValue(slider.value);
+          });
+
+          // Input → slider
+          valueInput.addEventListener('change', () => {
+            let val = parseFloat(valueInput.value);
+            const min = parseFloat(slider.min);
+            const max = parseFloat(slider.max);
+            if (isNaN(val)) val = parseFloat(slider.value);
+            val = Math.max(min, Math.min(max, val));
+            slider.value = val;
+            valueInput.value = formatValue(val);
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+
+          // Step buttons
+          stepBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+              const step = parseFloat(slider.step) || 1;
+              let val = parseFloat(slider.value);
+              const min = parseFloat(slider.min);
+              const max = parseFloat(slider.max);
+
+              if (btn.dataset.action === 'up') {
+                val = Math.min(max, val + step);
+              } else {
+                val = Math.max(min, val - step);
+              }
+
+              slider.value = val;
+              valueInput.value = formatValue(val);
+              slider.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+          });
+        });
+      });
+    </script>
     <script type="module" src="src/main.js"></script>
   </body>
 </html>

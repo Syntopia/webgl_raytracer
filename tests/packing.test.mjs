@@ -14,7 +14,7 @@ const simpleNodes = [
     leftFirst: 0,
     primCount: 1,
     rightChild: 0,
-    triIndices: [0]
+    primIndices: [0]
   }
 ];
 
@@ -45,11 +45,15 @@ test("packTriangles expands triangles", () => {
   assert.equal(packed.data[8], 0);
 });
 
-test("packTriIndices packs indices into texels", () => {
-  const packed = packTriIndices(new Uint32Array([2, 5, 7]), 64);
-  assert.equal(packed.data[0], 2);
-  assert.equal(packed.data[4], 5);
-  assert.equal(packed.data[8], 7);
+test("packTriIndices packs indices into texels using bit patterns", () => {
+  const indices = new Uint32Array([2, 5, 7]);
+  const packed = packTriIndices(indices, 64);
+  // Indices are stored as uint32 bit patterns in float32 slots
+  // Read them back using DataView to verify correct encoding
+  const dataView = new DataView(packed.data.buffer);
+  assert.equal(dataView.getUint32(0, true), 2);  // offset 0, little-endian
+  assert.equal(dataView.getUint32(16, true), 5); // offset 16 (4 floats * 4 bytes)
+  assert.equal(dataView.getUint32(32, true), 7); // offset 32
 });
 
 test("packTriColors packs per-triangle colors", () => {

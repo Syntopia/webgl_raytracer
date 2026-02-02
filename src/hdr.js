@@ -125,6 +125,74 @@ function rgbeToFloat(rgbe, width, height) {
   return out;
 }
 
+/**
+ * Build importance sampling data for environment map.
+ * Returns marginal CDF (1D) and conditional CDFs (2D) for sampling
+ * directions proportionally to luminance * sin(theta).
+ */
+export function buildEnvSamplingData(data, width, height) {
+  const PI = Math.PI;
+
+  // Compute luminance * sin(theta) for each pixel
+  // sin(theta) accounts for solid angle (pixels near poles cover less area)
+  const pdf = new Float32Array(width * height);
+  const rowSums = new Float32Array(height);
+
+  for (let y = 0; y < height; y++) {
+    // theta goes from 0 (top) to PI (bottom)
+    const theta = (y + 0.5) / height * PI;
+    const sinTheta = Math.sin(theta);
+
+    let rowSum = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      const i = idx * 4;
+      // Luminance weighted by solid angle
+      const lum = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) * sinTheta;
+      pdf[idx] = lum;
+      rowSum += lum;
+    }
+    rowSums[y] = rowSum;
+  }
+
+  // Total luminance (for normalization)
+  let totalSum = 0;
+  for (let y = 0; y < height; y++) {
+    totalSum += rowSums[y];
+  }
+
+  // Build marginal CDF (for selecting rows)
+  // Size: height + 1 (includes 0 at start)
+  const marginalCdf = new Float32Array(height + 1);
+  marginalCdf[0] = 0;
+  for (let y = 0; y < height; y++) {
+    marginalCdf[y + 1] = marginalCdf[y] + rowSums[y] / totalSum;
+  }
+  marginalCdf[height] = 1.0; // Ensure exact 1.0
+
+  // Build conditional CDFs (for selecting columns within each row)
+  // Size: width + 1 per row (includes 0 at start of each row)
+  const conditionalCdf = new Float32Array((width + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const rowStart = y * (width + 1);
+    conditionalCdf[rowStart] = 0;
+    const rowSum = rowSums[y] > 0 ? rowSums[y] : 1;
+    for (let x = 0; x < width; x++) {
+      const idx = y * width + x;
+      conditionalCdf[rowStart + x + 1] = conditionalCdf[rowStart + x] + pdf[idx] / rowSum;
+    }
+    conditionalCdf[rowStart + width] = 1.0; // Ensure exact 1.0
+  }
+
+  return {
+    marginalCdf,      // Float32Array of size (height + 1)
+    conditionalCdf,   // Float32Array of size (width + 1) * height
+    totalLuminance: totalSum,
+    width,
+    height
+  };
+}
+
 export async function loadHDR(url, logger) {
   const res = await fetch(url);
   if (!res.ok) {
