@@ -6,6 +6,23 @@ use wasm_bindgen::prelude::*;
 
 use tables::{EDGE_TABLE, TRI_TABLE};
 
+/// Fast approximate square root using the famous "fast inverse sqrt" trick
+/// followed by multiplication. Accuracy is within ~0.2% which is sufficient
+/// for distance field calculations.
+#[inline(always)]
+fn fast_sqrt(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    // One iteration of Newton-Raphson on inverse sqrt, then multiply
+    let half = 0.5 * x;
+    let i = x.to_bits();
+    let i = 0x5f375a86 - (i >> 1); // Magic constant for f32
+    let y = f32::from_bits(i);
+    let y = y * (1.5 - half * y * y); // One Newton-Raphson iteration
+    x * y
+}
+
 #[derive(Clone, Copy)]
 struct Atom {
     center: [f32; 3],
@@ -109,26 +126,65 @@ impl DistanceGrid {
         let iy1 = gy1.min(self.ny as i32 - 1).max(0) as usize;
         let iz1 = gz1.min(self.nz as i32 - 1).max(0) as usize;
 
+        // Pre-compute squared thresholds for early rejection
+        let max_dist_plus_r = self.max_dist + radius;
+        let max_dist_plus_r_sq = max_dist_plus_r * max_dist_plus_r;
+        let neg_max_dist_plus_r = radius - self.max_dist;
+        let neg_threshold_sq = if neg_max_dist_plus_r > 0.0 {
+            neg_max_dist_plus_r * neg_max_dist_plus_r
+        } else {
+            0.0
+        };
+
+        let stride_y = self.nx;
+        let stride_z = self.nx * self.ny;
+
         for iz in iz0..=iz1 {
             let wz = self.min[2] + iz as f32 * self.resolution;
             let dz = wz - center[2];
             let dz2 = dz * dz;
+            // Early Z rejection: if dz² alone exceeds threshold, skip entire Z-slice
+            if dz2 > max_dist_plus_r_sq {
+                continue;
+            }
+            let base_z = iz * stride_z;
+
             for iy in iy0..=iy1 {
                 let wy = self.min[1] + iy as f32 * self.resolution;
                 let dy = wy - center[1];
                 let dy2 = dy * dy;
+                let dyz2 = dy2 + dz2;
+                // Early Y rejection: if dy² + dz² alone exceeds threshold, skip entire row
+                if dyz2 > max_dist_plus_r_sq {
+                    continue;
+                }
+                let base_yz = base_z + iy * stride_y;
+
                 for ix in ix0..=ix1 {
                     let wx = self.min[0] + ix as f32 * self.resolution;
                     let dx = wx - center[0];
-                    let mut dist = (dx * dx + dy2 + dz2).sqrt() - radius;
-                    if dist > self.max_dist {
-                        dist = self.max_dist;
-                    } else if dist < -self.max_dist {
-                        dist = -self.max_dist;
+                    let dist_sq = dx * dx + dyz2;
+
+                    // Early rejection: squared distance outside influence range
+                    if dist_sq > max_dist_plus_r_sq {
+                        continue;
                     }
-                    let idx = self.index(ix, iy, iz);
-                    if dist < self.data[idx] {
-                        self.data[idx] = dist;
+
+                    let idx = base_yz + ix;
+                    let current = unsafe { *self.data.get_unchecked(idx) };
+
+                    // Skip if this cell is already deeply inside another sphere
+                    // and our sphere can't possibly improve it
+                    if current <= -self.max_dist && dist_sq >= neg_threshold_sq {
+                        continue;
+                    }
+
+                    // Only compute sqrt when we might update the cell
+                    let dist_raw = fast_sqrt(dist_sq) - radius;
+                    let dist = dist_raw.clamp(-self.max_dist, self.max_dist);
+
+                    if dist < current {
+                        unsafe { *self.data.get_unchecked_mut(idx) = dist; }
                     }
                 }
             }
@@ -138,14 +194,6 @@ impl DistanceGrid {
     fn clear(&mut self) {
         self.data.fill(self.default_value);
     }
-}
-
-#[derive(Hash, PartialEq, Eq)]
-struct EdgeKey {
-    axis: u8,
-    ix: i32,
-    iy: i32,
-    iz: i32,
 }
 
 struct Mesh {
@@ -172,6 +220,8 @@ fn interpolate_vertex(p1: [f32; 3], p2: [f32; 3], v1: f32, v2: f32, isovalue: f3
     ]
 }
 
+/// Trilinear interpolation of distance field for smooth normal computation.
+#[inline]
 fn sample_trilinear(grid: &DistanceGrid, wx: f32, wy: f32, wz: f32) -> f32 {
     let fx = (wx - grid.min[0]) / grid.resolution;
     let fy = (wy - grid.min[1]) / grid.resolution;
@@ -221,25 +271,102 @@ fn sample_trilinear(grid: &DistanceGrid, wx: f32, wy: f32, wz: f32) -> f32 {
     c0 * (1.0 - tz) + c1 * tz
 }
 
-fn compute_normal(grid: &DistanceGrid, pos: [f32; 3]) -> [f32; 3] {
-    let h = grid.resolution;
-    let gx = sample_trilinear(grid, pos[0] + h, pos[1], pos[2]) - sample_trilinear(grid, pos[0] - h, pos[1], pos[2]);
-    let gy = sample_trilinear(grid, pos[0], pos[1] + h, pos[2]) - sample_trilinear(grid, pos[0], pos[1] - h, pos[2]);
-    let gz = sample_trilinear(grid, pos[0], pos[1], pos[2] + h) - sample_trilinear(grid, pos[0], pos[1], pos[2] - h);
-    let len = (gx * gx + gy * gy + gz * gz).sqrt();
-    if len > 1e-4 {
-        [gx / len, gy / len, gz / len]
+/// Compute normal using direct grid cell lookups (faster but lower quality).
+/// Uses central difference on the 6 neighboring grid cells.
+#[allow(dead_code)]
+#[inline]
+fn compute_normal_fast(grid: &DistanceGrid, ix: i32, iy: i32, iz: i32) -> [f32; 3] {
+    // Central difference using direct grid samples (much faster than trilinear)
+    let gx = grid.get(ix + 1, iy, iz) - grid.get(ix - 1, iy, iz);
+    let gy = grid.get(ix, iy + 1, iz) - grid.get(ix, iy - 1, iz);
+    let gz = grid.get(ix, iy, iz + 1) - grid.get(ix, iy, iz - 1);
+    let len_sq = gx * gx + gy * gy + gz * gz;
+    if len_sq > 1e-8 {
+        let inv_len = fast_inv_sqrt(len_sq);
+        [gx * inv_len, gy * inv_len, gz * inv_len]
     } else {
         [0.0, 1.0, 0.0]
     }
 }
 
-fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> Mesh {
-    let mut vertices: Vec<f32> = Vec::new();
-    let mut normals: Vec<f32> = Vec::new();
-    let mut indices: Vec<u32> = Vec::new();
+/// Compute normal using trilinear interpolation for smooth gradients.
+#[inline]
+fn compute_normal(grid: &DistanceGrid, pos: [f32; 3]) -> [f32; 3] {
+    let h = grid.resolution;
+    let gx = sample_trilinear(grid, pos[0] + h, pos[1], pos[2]) - sample_trilinear(grid, pos[0] - h, pos[1], pos[2]);
+    let gy = sample_trilinear(grid, pos[0], pos[1] + h, pos[2]) - sample_trilinear(grid, pos[0], pos[1] - h, pos[2]);
+    let gz = sample_trilinear(grid, pos[0], pos[1], pos[2] + h) - sample_trilinear(grid, pos[0], pos[1], pos[2] - h);
+    let len_sq = gx * gx + gy * gy + gz * gz;
+    if len_sq > 1e-8 {
+        let inv_len = fast_inv_sqrt(len_sq);
+        [gx * inv_len, gy * inv_len, gz * inv_len]
+    } else {
+        [0.0, 1.0, 0.0]
+    }
+}
 
-    let mut edge_cache: HashMap<EdgeKey, u32> = HashMap::new();
+/// Fast inverse square root (Quake III style)
+#[inline(always)]
+fn fast_inv_sqrt(x: f32) -> f32 {
+    let half = 0.5 * x;
+    let i = x.to_bits();
+    let i = 0x5f375a86 - (i >> 1);
+    let y = f32::from_bits(i);
+    y * (1.5 - half * y * y)
+}
+
+/// Optimized edge cache using a flat array with spatial indexing.
+/// Much faster than HashMap for dense grid traversal.
+struct EdgeCache {
+    // Store vertex index for each edge. Layout: [axis][z][y][x]
+    // axis 0 = X edges, axis 1 = Y edges, axis 2 = Z edges
+    data: Vec<u32>,
+    nx: usize,
+    ny: usize,
+    nz: usize,
+}
+
+impl EdgeCache {
+    const EMPTY: u32 = u32::MAX;
+
+    fn new(nx: usize, ny: usize, nz: usize) -> Self {
+        // Each axis needs (nx * ny * nz) slots
+        let size = 3 * nx * ny * nz;
+        Self {
+            data: vec![Self::EMPTY; size],
+            nx, ny, nz,
+        }
+    }
+
+    #[inline(always)]
+    fn index(&self, axis: u8, ix: i32, iy: i32, iz: i32) -> usize {
+        let base = (axis as usize) * self.nx * self.ny * self.nz;
+        base + (iz as usize) * self.nx * self.ny + (iy as usize) * self.nx + (ix as usize)
+    }
+
+    #[inline(always)]
+    fn get(&self, axis: u8, ix: i32, iy: i32, iz: i32) -> Option<u32> {
+        let idx = self.index(axis, ix, iy, iz);
+        let val = unsafe { *self.data.get_unchecked(idx) };
+        if val == Self::EMPTY { None } else { Some(val) }
+    }
+
+    #[inline(always)]
+    fn set(&mut self, axis: u8, ix: i32, iy: i32, iz: i32, vertex_idx: u32) {
+        let idx = self.index(axis, ix, iy, iz);
+        unsafe { *self.data.get_unchecked_mut(idx) = vertex_idx; }
+    }
+}
+
+fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> Mesh {
+    // Pre-allocate with estimated capacity (reduces reallocations)
+    let estimated_vertices = (grid.nx * grid.ny * grid.nz) / 20;
+    let mut vertices: Vec<f32> = Vec::with_capacity(estimated_vertices * 3);
+    let mut normals: Vec<f32> = Vec::with_capacity(estimated_vertices * 3);
+    let mut indices: Vec<u32> = Vec::with_capacity(estimated_vertices * 2);
+
+    // Use flat array edge cache instead of HashMap
+    let mut edge_cache = EdgeCache::new(grid.nx, grid.ny, grid.nz);
 
     let edge_corners: [[usize; 2]; 12] = [
         [0, 1], [1, 2], [2, 3], [3, 0],
@@ -251,6 +378,7 @@ fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> M
         [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1],
     ];
 
+    // Inline vertex addition with trilinear normal computation
     let mut add_vertex = |pos: [f32; 3]| -> u32 {
         let idx = (vertices.len() / 3) as u32;
         vertices.extend_from_slice(&pos);
@@ -259,30 +387,43 @@ fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> M
         idx
     };
 
-    for iz in 0..(grid.nz.saturating_sub(1)) as i32 {
-        for iy in 0..(grid.ny.saturating_sub(1)) as i32 {
-            for ix in 0..(grid.nx.saturating_sub(1)) as i32 {
+    let nz_limit = (grid.nz.saturating_sub(1)) as i32;
+    let ny_limit = (grid.ny.saturating_sub(1)) as i32;
+    let nx_limit = (grid.nx.saturating_sub(1)) as i32;
+
+    for iz in 0..nz_limit {
+        for iy in 0..ny_limit {
+            for ix in 0..nx_limit {
+                // Load all 8 corner values (likely cache-friendly access pattern)
                 let mut v = [0.0f32; 8];
-                let mut corners = [[0.0f32; 3]; 8];
                 for i in 0..8 {
                     let o = corner_offsets[i];
                     v[i] = grid.get(ix + o[0], iy + o[1], iz + o[2]);
-                    corners[i] = grid.world_pos(ix + o[0], iy + o[1], iz + o[2]);
                 }
 
+                // Build cube index
                 let mut cube_index = 0u16;
                 for i in 0..8 {
                     if v[i] < isovalue {
                         cube_index |= 1 << i;
                     }
                 }
-                if EDGE_TABLE[cube_index as usize] == 0 {
+
+                let edge_bits = EDGE_TABLE[cube_index as usize];
+                if edge_bits == 0 {
                     continue;
+                }
+
+                // Compute corner world positions only for active cells
+                let mut corners = [[0.0f32; 3]; 8];
+                for i in 0..8 {
+                    let o = corner_offsets[i];
+                    corners[i] = grid.world_pos(ix + o[0], iy + o[1], iz + o[2]);
                 }
 
                 let mut edge_verts: [i32; 12] = [-1; 12];
                 for e in 0..12 {
-                    if (EDGE_TABLE[cube_index as usize] & (1 << e)) != 0 {
+                    if (edge_bits & (1 << e)) != 0 {
                         let c0 = edge_corners[e][0];
                         let c1 = edge_corners[e][1];
                         let o0 = corner_offsets[c0];
@@ -294,13 +435,13 @@ fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> M
                         } else {
                             (2u8, ix + o0[0], iy + o0[1], iz + o0[2].min(o1[2]))
                         };
-                        let key = EdgeKey { axis, ix: kx, iy: ky, iz: kz };
-                        if let Some(idx) = edge_cache.get(&key) {
-                            edge_verts[e] = *idx as i32;
+
+                        if let Some(cached_idx) = edge_cache.get(axis, kx, ky, kz) {
+                            edge_verts[e] = cached_idx as i32;
                         } else {
                             let pos = interpolate_vertex(corners[c0], corners[c1], v[c0], v[c1], isovalue);
                             let idx = add_vertex(pos);
-                            edge_cache.insert(key, idx);
+                            edge_cache.set(axis, kx, ky, kz, idx);
                             edge_verts[e] = idx as i32;
                         }
                     }
@@ -326,7 +467,7 @@ fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> M
     let normals_out = if smooth_normals {
         smooth_normals_fn(&vertices, &normals, &indices)
     } else {
-        normals.clone()
+        normals
     };
 
     Mesh {
@@ -338,56 +479,56 @@ fn marching_cubes(grid: &DistanceGrid, isovalue: f32, smooth_normals: bool) -> M
 
 fn smooth_normals_fn(vertices: &[f32], per_vertex_normals: &[f32], indices: &[u32]) -> Vec<f32> {
     let vertex_count = vertices.len() / 3;
-    let mut accumulated = vec![0.0f32; vertex_count * 3];
+    // Reuse a single buffer - accumulate then normalize in-place
+    let mut result = vec![0.0f32; vertex_count * 3];
 
-    for tri in indices.chunks(3) {
-        if tri.len() < 3 {
-            continue;
-        }
+    for tri in indices.chunks_exact(3) {
         let i0 = tri[0] as usize;
         let i1 = tri[1] as usize;
         let i2 = tri[2] as usize;
 
-        let v0 = [
-            vertices[i0 * 3],
-            vertices[i0 * 3 + 1],
-            vertices[i0 * 3 + 2],
-        ];
-        let v1 = [
-            vertices[i1 * 3],
-            vertices[i1 * 3 + 1],
-            vertices[i1 * 3 + 2],
-        ];
-        let v2 = [
-            vertices[i2 * 3],
-            vertices[i2 * 3 + 1],
-            vertices[i2 * 3 + 2],
-        ];
+        // Compute face normal via cross product
+        let v0x = vertices[i0 * 3];
+        let v0y = vertices[i0 * 3 + 1];
+        let v0z = vertices[i0 * 3 + 2];
 
-        let e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
-        let e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]];
-        let nx = e1[1] * e2[2] - e1[2] * e2[1];
-        let ny = e1[2] * e2[0] - e1[0] * e2[2];
-        let nz = e1[0] * e2[1] - e1[1] * e2[0];
+        let e1x = vertices[i1 * 3] - v0x;
+        let e1y = vertices[i1 * 3 + 1] - v0y;
+        let e1z = vertices[i1 * 3 + 2] - v0z;
 
-        for &idx in &[i0, i1, i2] {
-            accumulated[idx * 3] += nx;
-            accumulated[idx * 3 + 1] += ny;
-            accumulated[idx * 3 + 2] += nz;
-        }
+        let e2x = vertices[i2 * 3] - v0x;
+        let e2y = vertices[i2 * 3 + 1] - v0y;
+        let e2z = vertices[i2 * 3 + 2] - v0z;
+
+        let nx = e1y * e2z - e1z * e2y;
+        let ny = e1z * e2x - e1x * e2z;
+        let nz = e1x * e2y - e1y * e2x;
+
+        // Accumulate to all three vertices
+        result[i0 * 3] += nx;
+        result[i0 * 3 + 1] += ny;
+        result[i0 * 3 + 2] += nz;
+        result[i1 * 3] += nx;
+        result[i1 * 3 + 1] += ny;
+        result[i1 * 3 + 2] += nz;
+        result[i2 * 3] += nx;
+        result[i2 * 3 + 1] += ny;
+        result[i2 * 3 + 2] += nz;
     }
 
-    let mut result = vec![0.0f32; vertex_count * 3];
+    // Normalize in-place using fast inverse sqrt
     for i in 0..vertex_count {
-        let ax = accumulated[i * 3];
-        let ay = accumulated[i * 3 + 1];
-        let az = accumulated[i * 3 + 2];
-        let len = (ax * ax + ay * ay + az * az).sqrt();
-        if len > 1e-4 {
-            result[i * 3] = ax / len;
-            result[i * 3 + 1] = ay / len;
-            result[i * 3 + 2] = az / len;
+        let ax = result[i * 3];
+        let ay = result[i * 3 + 1];
+        let az = result[i * 3 + 2];
+        let len_sq = ax * ax + ay * ay + az * az;
+        if len_sq > 1e-8 {
+            let inv_len = fast_inv_sqrt(len_sq);
+            result[i * 3] = ax * inv_len;
+            result[i * 3 + 1] = ay * inv_len;
+            result[i * 3 + 2] = az * inv_len;
         } else {
+            // Fallback to per-vertex normals
             result[i * 3] = per_vertex_normals[i * 3];
             result[i * 3 + 1] = per_vertex_normals[i * 3 + 1];
             result[i * 3 + 2] = per_vertex_normals[i * 3 + 2];
@@ -490,6 +631,7 @@ fn filter_ses_components(mesh: Mesh, atoms: &[Atom], probe_radius: f32, max_atom
     let mut checked = vec![false; count];
     let threshold = probe_radius * 1.5;
     let max_center_distance = max_atom_radius + threshold;
+    let max_center_dist_sq = max_center_distance * max_center_distance;
     let atom_hash = build_atom_hash(atoms, max_center_distance);
 
     for i in 0..vertex_count {
@@ -512,12 +654,14 @@ fn filter_ses_components(mesh: Mesh, atoms: &[Atom], probe_radius: f32, max_atom
                 let dx = vx - atom.center[0];
                 let dy = vy - atom.center[1];
                 let dz = vz - atom.center[2];
-                let center_dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                if center_dist > max_center_distance {
+                let dist_sq = dx * dx + dy * dy + dz * dz;
+                // Early rejection using squared distance
+                if dist_sq > max_center_dist_sq {
                     continue;
                 }
-                let dist = center_dist - atom.radius;
-                if dist < threshold {
+                // Only compute sqrt when we need the actual distance
+                let threshold_for_atom = atom.radius + threshold;
+                if dist_sq < threshold_for_atom * threshold_for_atom {
                     component_valid[comp] = true;
                     break;
                 }
@@ -527,9 +671,10 @@ fn filter_ses_components(mesh: Mesh, atoms: &[Atom], probe_radius: f32, max_atom
                 let dx = vx - atom.center[0];
                 let dy = vy - atom.center[1];
                 let dz = vz - atom.center[2];
-                let center_dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                let dist = center_dist - atom.radius;
-                if dist < threshold {
+                let dist_sq = dx * dx + dy * dy + dz * dz;
+                let threshold_for_atom = atom.radius + threshold;
+                // Use squared distance comparison to avoid sqrt
+                if dist_sq < threshold_for_atom * threshold_for_atom {
                     component_valid[comp] = true;
                     break;
                 }
@@ -580,6 +725,34 @@ fn flip_normals(mesh: &mut Mesh) {
     for n in mesh.normals.iter_mut() {
         *n = -*n;
     }
+}
+
+/// Deduplicate vertices using spatial hashing.
+/// Returns representative points from each occupied cell.
+fn deduplicate_vertices(vertices: &[f32], cell_size: f32) -> Vec<[f32; 3]> {
+    let vertex_count = vertices.len() / 3;
+    if vertex_count == 0 {
+        return Vec::new();
+    }
+
+    // Use a HashMap to track occupied cells and their representative vertex
+    let inv_cell = 1.0 / cell_size;
+    let mut cells: HashMap<(i32, i32, i32), [f32; 3]> = HashMap::with_capacity(vertex_count / 4);
+
+    for i in 0..vertex_count {
+        let x = vertices[i * 3];
+        let y = vertices[i * 3 + 1];
+        let z = vertices[i * 3 + 2];
+
+        let cx = (x * inv_cell).floor() as i32;
+        let cy = (y * inv_cell).floor() as i32;
+        let cz = (z * inv_cell).floor() as i32;
+
+        // Only keep first vertex in each cell (or could average them)
+        cells.entry((cx, cy, cz)).or_insert([x, y, z]);
+    }
+
+    cells.into_values().collect()
 }
 
 fn mesh_to_js(mesh: Mesh) -> Result<JsValue, JsValue> {
@@ -648,14 +821,14 @@ pub fn compute_ses(
     }
 
     grid.clear();
-    let sas_vertex_count = sas_mesh.vertices.len() / 3;
-    for i in 0..sas_vertex_count {
-        let center = [
-            sas_mesh.vertices[i * 3],
-            sas_mesh.vertices[i * 3 + 1],
-            sas_mesh.vertices[i * 3 + 2],
-        ];
-        grid.add_sphere(center, probe_radius);
+
+    // Deduplicate SAS vertices spatially to reduce redundant probe sphere calculations.
+    // Vertices within half resolution distance contribute nearly identical probe spheres.
+    let dedup_cell_size = resolution * 0.5;
+    let deduped_centers = deduplicate_vertices(&sas_mesh.vertices, dedup_cell_size);
+
+    for center in &deduped_centers {
+        grid.add_sphere(*center, probe_radius);
     }
 
     let ses_mesh = marching_cubes(&grid, 0.0, smooth_normals);

@@ -68,6 +68,7 @@ uniform float uMatteSpecular;
 uniform float uMatteRoughness;
 uniform float uMatteDiffuseRoughness;
 uniform float uWrapDiffuse;
+uniform float uRimBoost;
 uniform int uMaxBounces;
 uniform float uExposure;
 uniform float uAmbientIntensity;
@@ -1124,6 +1125,13 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
     float wrap = (uMaterialMode == 1) ? uWrapDiffuse : 0.0;
     vec3 F0 = (uMaterialMode == 1) ? vec3(uMatteSpecular) : mix(vec3(0.04), baseColor, metallic);
 
+    if (bounce == 0 && uMaterialMode == 0 && uRimBoost > 0.0) {
+      float NdotV = max(dot(shadingNormal, V), 0.0);
+      float rim = pow(1.0 - NdotV, 3.0);
+      vec3 rimColor = baseColor;
+      radiance += throughput * rimColor * (uRimBoost * rim);
+    }
+
     // Next Event Estimation: Sample environment directly with MIS
     if (uUseEnv == 1) {
       float envSamplePdf;
@@ -1549,6 +1557,7 @@ export function setTraceUniforms(gl, program, uniforms) {
   gl.uniform1f(gl.getUniformLocation(program, "uMatteRoughness"), uniforms.matteRoughness ?? 0.5);
   gl.uniform1f(gl.getUniformLocation(program, "uMatteDiffuseRoughness"), uniforms.matteDiffuseRoughness ?? 0.5);
   gl.uniform1f(gl.getUniformLocation(program, "uWrapDiffuse"), uniforms.wrapDiffuse ?? 0.2);
+  gl.uniform1f(gl.getUniformLocation(program, "uRimBoost"), uniforms.rimBoost ?? 0.0);
   gl.uniform1i(gl.getUniformLocation(program, "uMaxBounces"), uniforms.maxBounces);
   gl.uniform1f(gl.getUniformLocation(program, "uExposure"), uniforms.exposure);
   gl.uniform1f(gl.getUniformLocation(program, "uAmbientIntensity"), uniforms.ambientIntensity);

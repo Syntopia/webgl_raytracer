@@ -580,16 +580,15 @@
 
               <div class="divider"></div>
 
-              <div class="checkbox-group">
-                <input id="showSurface" type="checkbox" />
-                <label for="showSurface">Show molecular surface (SES)</label>
-              </div>
+              <label for="surfaceMode">Molecular surface</label>
+              <select id="surfaceMode">
+                <option value="none">None (atoms only)</option>
+                <option value="js">SES - JavaScript</option>
+                <option value="wasm">SES - WebAssembly</option>
+                <option value="webgl">SES - WebGL (GPU)</option>
+              </select>
 
-              <div class="checkbox-group">
-                <input id="useWasmSurface" type="checkbox" />
-                <label for="useWasmSurface">Use WebAssembly for surface (requires build)</label>
-              </div>
-
+              <div style="height: 12px"></div>
               <label for="probeRadius">Probe radius (Å)</label>
               <div class="slider-input">
                 <input id="probeRadius" type="range" min="0.5" max="3.0" step="0.1" value="1.4" />
@@ -803,6 +802,17 @@
                   <div class="step-buttons">
                     <button type="button" class="step-btn" data-action="up" data-for="roughness">▶</button>
                     <button type="button" class="step-btn" data-action="down" data-for="roughness">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="rimBoost">Rim boost (metallic)</label>
+                <div class="slider-input">
+                  <input id="rimBoost" type="range" min="0" max="1" step="0.01" value="0.2" />
+                  <input type="text" class="value-input" data-for="rimBoost" value="0.20" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="rimBoost">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="rimBoost">◀</button>
                   </div>
                 </div>
               </div>

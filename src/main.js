@@ -18,6 +18,7 @@ import {
 } from "./molecular.js";
 import { computeSES, sesToTriangles } from "./surface.js";
 import { computeSESWasm, initSurfaceWasm, surfaceWasmReady } from "./surface_wasm.js";
+import { computeSESWebGL, webglSurfaceAvailable } from "./surface_webgl.js";
 import {
   initWebGL,
   createDataTexture,
@@ -33,6 +34,7 @@ import {
 } from "./webgl.js";
 
 const canvas = document.getElementById("view");
+const canvasContainer = canvas?.closest(".canvas-container");
 const renderOverlay = document.getElementById("renderOverlay");
 const loadingOverlay = document.getElementById("loadingOverlay");
 const statusEl = document.getElementById("status");
@@ -50,8 +52,7 @@ const loadPdbIdBtn = document.getElementById("loadPdbId");
 const pdbDisplayStyle = document.getElementById("pdbDisplayStyle");
 const pdbAtomScale = document.getElementById("pdbAtomScale");
 const pdbBondRadius = document.getElementById("pdbBondRadius");
-const showSurfaceToggle = document.getElementById("showSurface");
-const useWasmSurfaceToggle = document.getElementById("useWasmSurface");
+const surfaceModeSelect = document.getElementById("surfaceMode");
 const probeRadiusInput = document.getElementById("probeRadius");
 const surfaceResolutionInput = document.getElementById("surfaceResolution");
 const smoothNormalsToggle = document.getElementById("smoothNormals");
@@ -64,6 +65,7 @@ const baseColorInput = document.getElementById("baseColor");
 const materialSelect = document.getElementById("materialSelect");
 const metallicInput = document.getElementById("metallic");
 const roughnessInput = document.getElementById("roughness");
+const rimBoostInput = document.getElementById("rimBoost");
 const matteSpecularInput = document.getElementById("matteSpecular");
 const matteRoughnessInput = document.getElementById("matteRoughness");
 const matteDiffuseRoughnessInput = document.getElementById("matteDiffuseRoughness");
@@ -124,6 +126,7 @@ const renderState = {
   materialMode: "metallic",
   metallic: 0.0,
   roughness: 0.4,
+  rimBoost: 0.2,
   matteSpecular: 0.03,
   matteRoughness: 0.5,
   matteDiffuseRoughness: 0.5,
@@ -158,6 +161,7 @@ const inputState = {
   lastX: 0,
   lastY: 0,
   arcballPrev: null,
+  dragMode: "rotate",
   keys: new Set()
 };
 
@@ -530,7 +534,8 @@ async function loadMolecularFile(text, filename) {
  * Load molecular geometry from spheres and cylinders.
  */
 async function loadMolecularGeometry(spheres, cylinders, molData = null, options = null) {
-  const showSurface = showSurfaceToggle?.checked || false;
+  const surfaceMode = surfaceModeSelect?.value || "none";
+  const showSurface = surfaceMode !== "none";
   const displayOptions = options ?? getMolecularDisplayOptions();
   const split = molData ? splitMolDataByHetatm(molData) : null;
   const heteroGeometry = split ? moleculeToGeometry(split.hetero, displayOptions) : { spheres: [], cylinders: [] };
@@ -553,8 +558,8 @@ async function loadMolecularGeometry(spheres, cylinders, molData = null, options
       const resolution = parseFloat(surfaceResolutionInput?.value) || 0.25;
       const smoothNormals = smoothNormalsToggle?.checked || false;
 
-      const usingWasm = useWasmSurfaceToggle?.checked || false;
-      const backendLabel = usingWasm ? "WASM" : "JS";
+      const backendLabels = { js: "JS", wasm: "WASM", webgl: "WebGL" };
+      const backendLabel = backendLabels[surfaceMode] || surfaceMode;
       logger.info(
         `Computing SES surface (${backendLabel}, probe=${probeRadius}Å, resolution=${resolution}Å, smoothNormals=${smoothNormals})...`
       );
@@ -572,18 +577,23 @@ async function loadMolecularGeometry(spheres, cylinders, molData = null, options
       }));
 
       let sesMesh = null;
-      if (usingWasm) {
-        try {
+      try {
+        if (surfaceMode === "wasm") {
           if (!surfaceWasmReady()) {
             logger.info("Initializing SES WASM module...");
           }
           sesMesh = await computeSESWasm(atoms, { probeRadius, resolution, smoothNormals });
-        } catch (err) {
-          logger.error(err.message || String(err));
-          throw err;
+        } else if (surfaceMode === "webgl") {
+          if (!webglSurfaceAvailable()) {
+            throw new Error("WebGL surface computation not available (requires WebGL2 + EXT_color_buffer_float)");
+          }
+          sesMesh = computeSESWebGL(atoms, { probeRadius, resolution, smoothNormals });
+        } else {
+          sesMesh = computeSES(atoms, { probeRadius, resolution, smoothNormals });
         }
-      } else {
-        sesMesh = computeSES(atoms, { probeRadius, resolution, smoothNormals });
+      } catch (err) {
+        logger.error(err.message || String(err));
+        throw err;
       }
       const surfaceTime = performance.now() - surfaceStart;
       logger.info(
@@ -808,6 +818,7 @@ function updateMaterialState() {
   renderState.materialMode = materialSelect?.value || "metallic";
   renderState.metallic = clamp(Number(metallicInput.value), 0, 1);
   renderState.roughness = clamp(Number(roughnessInput.value), 0.02, 1);
+  renderState.rimBoost = clamp(Number(rimBoostInput?.value ?? 0.2), 0.0, 1.0);
   renderState.matteSpecular = clamp(Number(matteSpecularInput?.value ?? 0.03), 0.0, 0.08);
   renderState.matteRoughness = clamp(Number(matteRoughnessInput?.value ?? 0.5), 0.1, 1.0);
   renderState.matteDiffuseRoughness = clamp(Number(matteDiffuseRoughnessInput?.value ?? 0.5), 0.0, 1.0);
@@ -1342,6 +1353,7 @@ setTraceUniforms(gl, traceProgram, {
     baseColor: renderState.baseColor,
     metallic: renderState.metallic,
     roughness: renderState.roughness,
+    rimBoost: renderState.rimBoost,
     maxBounces: renderState.maxBounces,
     exposure: renderState.exposure,
     ambientIntensity: renderState.ambientIntensity,
@@ -1612,12 +1624,28 @@ canvas.addEventListener("mousedown", (event) => {
   inputState.lastX = event.clientX;
   inputState.lastY = event.clientY;
   inputState.arcballPrev = arcballVector(event.clientX, event.clientY);
+  if (event.button === 2) {
+    inputState.dragMode = "pan";
+  } else if (event.shiftKey) {
+    inputState.dragMode = "pan";
+  } else if (event.ctrlKey) {
+    inputState.dragMode = "zoom";
+  } else {
+    inputState.dragMode = "rotate";
+  }
   markInteractionActive();
 });
 
 canvas.addEventListener("mouseup", () => {
   inputState.dragging = false;
   inputState.arcballPrev = null;
+});
+
+canvas.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+canvasContainer?.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
 });
 
 canvas.addEventListener("mouseleave", () => {
@@ -1633,7 +1661,10 @@ canvas.addEventListener("mousemove", (event) => {
   inputState.lastY = event.clientY;
   markInteractionActive();
 
-  if (event.shiftKey) {
+  const rightDown = (event.buttons & 2) !== 0;
+  const mode = rightDown ? "pan" : (event.shiftKey ? "pan" : (event.ctrlKey ? "zoom" : inputState.dragMode));
+
+  if (mode === "pan") {
     const panScale = cameraState.distance * 0.002;
     const orbit = computeCameraVectors();
     const rightLen = Math.hypot(orbit.right[0], orbit.right[1], orbit.right[2]) || 1;
@@ -1652,7 +1683,7 @@ canvas.addEventListener("mousemove", (event) => {
     return;
   }
 
-  if (event.ctrlKey) {
+  if (mode === "zoom") {
     const zoom = Math.exp(dy * 0.005);
     const sceneScale = sceneData?.sceneScale || 1.0;
     const minDist = Math.max(0.1, sceneScale * 0.1);
@@ -1753,16 +1784,22 @@ bruteforceToggle.addEventListener("change", () => {
 });
 
 useGltfColorToggle.addEventListener("change", updateMaterialState);
-useWasmSurfaceToggle?.addEventListener("change", async () => {
-  if (!useWasmSurfaceToggle.checked) {
-    return;
-  }
-  try {
-    logger.info("Loading SES WASM module...");
-    await initSurfaceWasm();
-    logger.info("SES WASM module ready.");
-  } catch (err) {
-    logger.error(err.message || String(err));
+surfaceModeSelect?.addEventListener("change", async () => {
+  const mode = surfaceModeSelect.value;
+  if (mode === "wasm") {
+    try {
+      logger.info("Loading SES WASM module...");
+      await initSurfaceWasm();
+      logger.info("SES WASM module ready.");
+    } catch (err) {
+      logger.error(err.message || String(err));
+    }
+  } else if (mode === "webgl") {
+    if (!webglSurfaceAvailable()) {
+      logger.warn("WebGL surface not available - requires WebGL2 + EXT_color_buffer_float");
+    } else {
+      logger.info("WebGL surface computation available.");
+    }
   }
 });
 materialSelect?.addEventListener("change", () => {
@@ -1772,6 +1809,7 @@ materialSelect?.addEventListener("change", () => {
 baseColorInput.addEventListener("input", updateMaterialState);
 metallicInput.addEventListener("input", updateMaterialState);
 roughnessInput.addEventListener("input", updateMaterialState);
+rimBoostInput?.addEventListener("input", updateMaterialState);
 matteSpecularInput?.addEventListener("input", updateMaterialState);
 matteRoughnessInput?.addEventListener("input", updateMaterialState);
 matteDiffuseRoughnessInput?.addEventListener("input", updateMaterialState);
