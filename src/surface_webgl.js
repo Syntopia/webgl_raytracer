@@ -331,13 +331,12 @@ out float v_slice;
 void main() {
   float ix = mix(a_rect.x, a_rect.z, a_position.x);
   float iy = mix(a_rect.y, a_rect.w, a_position.y);
-  float iz = a_sliceRadius.x;
+  int slice = int(a_sliceRadius.x + 0.5);
+  int tileX = slice % u_slicesPerRow;
+  int tileY = slice / u_slicesPerRow;
 
-  float tileX = mod(iz, float(u_slicesPerRow));
-  float tileY = floor(iz / float(u_slicesPerRow));
-
-  float px = tileX * float(u_gridDim.x) + ix;
-  float py = tileY * float(u_gridDim.y) + iy;
+  float px = float(tileX * u_gridDim.x) + ix;
+  float py = float(tileY * u_gridDim.y) + iy;
 
   vec2 ndc = vec2(
     (px / float(u_texDim.x)) * 2.0 - 1.0,
@@ -347,7 +346,7 @@ void main() {
 
   v_center = a_center;
   v_radius = a_sliceRadius.y;
-  v_slice = iz;
+  v_slice = float(slice);
 }
 `;
 
