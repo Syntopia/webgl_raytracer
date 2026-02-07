@@ -461,6 +461,15 @@
         display: none;
         white-space: nowrap;
       }
+      .hover-box-overlay {
+        position: absolute;
+        border: 1px solid rgba(148, 163, 184, 0.95);
+        box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.9) inset;
+        border-radius: 2px;
+        pointer-events: none;
+        display: none;
+        z-index: 5;
+      }
 
       /* Inline flex row */
       .flex-row {
@@ -511,7 +520,6 @@
             <button class="tab-button active" data-tab-button="scene" type="button">Import</button>
             <button class="tab-button" data-tab-button="render" type="button">Render</button>
             <button class="tab-button" data-tab-button="material" type="button">Material</button>
-            <button class="tab-button" data-tab-button="lights" type="button">Lights</button>
           </div>
 
           <!-- SCENE TAB -->
@@ -521,13 +529,6 @@
 
               <label for="exampleSelect">Select scene or molecule</label>
               <select id="exampleSelect">
-                <optgroup label="3D Models (glTF)">
-                  <option value="assets/triangle.gltf">Triangle</option>
-                  <option value="assets/cube.gltf">Cube</option>
-                  <option value="assets/overlap_boxes.gltf">Overlap Boxes</option>
-                  <option value="assets/Duck.gltf">Duck</option>
-                  <option value="assets/ABeautifulGame.gltf">A Beautiful Game</option>
-                </optgroup>
                 <optgroup label="Test Primitives">
                   <option value="__test_primitives__">Spheres + Cylinders</option>
                   <option value="__test_1000_spheres__">1000 Random Spheres</option>
@@ -556,10 +557,6 @@
             <div class="form-section">
               <div class="form-section-title">Import Files</div>
 
-              <label for="fileInput">glTF model</label>
-              <input id="fileInput" type="file" accept=".gltf" />
-
-              <div style="height: 8px"></div>
               <label for="molFileInput">Molecular file (PDB/SDF/MOL)</label>
               <input id="molFileInput" type="file" accept=".pdb,.sdf,.mol" />
 
@@ -1034,7 +1031,140 @@
               </details>
             </div>
 
-            <button id="renderBtn">Render Frame</button>
+            <div class="form-section">
+              <details class="collapsible">
+                <summary>Lights settings</summary>
+                <div class="collapsible-body">
+                  <label for="ambientIntensity">Ambient intensity</label>
+                  <div class="slider-input">
+                    <input id="ambientIntensity" type="range" min="0" max="2" step="0.05" value="0" />
+                    <input type="text" class="value-input" data-for="ambientIntensity" value="0.00" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="ambientIntensity">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="ambientIntensity">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="ambientColor">Ambient color</label>
+                  <input id="ambientColor" type="color" value="#ffffff" />
+
+                  <div style="height: 8px"></div>
+                  <div class="checkbox-group">
+                    <input id="shadowToggle" type="checkbox" checked />
+                    <label for="shadowToggle">Cast shadows</label>
+                  </div>
+
+                  <div class="divider"></div>
+
+                  <div class="checkbox-group" style="margin-bottom:0">
+                    <input id="light1Enable" type="checkbox" checked />
+                    <label for="light1Enable">Key Light (camera-relative)</label>
+                  </div>
+
+                  <label for="light1Azimuth">Azimuth</label>
+                  <div class="slider-input">
+                    <input id="light1Azimuth" type="range" min="-180" max="180" step="1" value="-40" />
+                    <input type="text" class="value-input" data-for="light1Azimuth" value="-40" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light1Azimuth">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light1Azimuth">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light1Elevation">Elevation</label>
+                  <div class="slider-input">
+                    <input id="light1Elevation" type="range" min="-85" max="85" step="1" value="-30" />
+                    <input type="text" class="value-input" data-for="light1Elevation" value="-30" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light1Elevation">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light1Elevation">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light1Intensity">Intensity</label>
+                  <div class="slider-input">
+                    <input id="light1Intensity" type="range" min="0" max="20" step="0.05" value="5.0" />
+                    <input type="text" class="value-input" data-for="light1Intensity" value="5.00" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light1Intensity">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light1Intensity">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light1Extent">Extent angle (degrees)</label>
+                  <div class="slider-input">
+                    <input id="light1Extent" type="range" min="0" max="60" step="1" value="22" />
+                    <input type="text" class="value-input" data-for="light1Extent" value="22" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light1Extent">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light1Extent">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light1Color">Color</label>
+                  <input id="light1Color" type="color" value="#ffffff" />
+
+                  <div class="divider"></div>
+
+                  <div class="checkbox-group" style="margin-bottom:0">
+                    <input id="light2Enable" type="checkbox" checked />
+                    <label for="light2Enable">Fill Light (camera-relative)</label>
+                  </div>
+
+                  <label for="light2Azimuth">Azimuth</label>
+                  <div class="slider-input">
+                    <input id="light2Azimuth" type="range" min="-180" max="180" step="1" value="40" />
+                    <input type="text" class="value-input" data-for="light2Azimuth" value="40" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light2Azimuth">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light2Azimuth">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light2Elevation">Elevation</label>
+                  <div class="slider-input">
+                    <input id="light2Elevation" type="range" min="-85" max="85" step="1" value="0" />
+                    <input type="text" class="value-input" data-for="light2Elevation" value="0" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light2Elevation">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light2Elevation">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light2Intensity">Intensity</label>
+                  <div class="slider-input">
+                    <input id="light2Intensity" type="range" min="0" max="20" step="0.05" value="0.6" />
+                    <input type="text" class="value-input" data-for="light2Intensity" value="0.60" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light2Intensity">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light2Intensity">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light2Extent">Extent angle (degrees)</label>
+                  <div class="slider-input">
+                    <input id="light2Extent" type="range" min="0" max="60" step="1" value="50" />
+                    <input type="text" class="value-input" data-for="light2Extent" value="50" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="light2Extent">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="light2Extent">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="light2Color">Color</label>
+                  <input id="light2Color" type="color" value="#ffffff" />
+                </div>
+              </details>
+            </div>
 
             <div class="form-section">
               <div class="form-section-title">Debug Visualization</div>
@@ -1055,8 +1185,8 @@
               <div class="form-section-title">Material Properties</div>
 
               <div class="checkbox-group">
-                <input id="useGltfColor" type="checkbox" checked />
-                <label for="useGltfColor">Use imported colors</label>
+                <input id="useImportedColor" type="checkbox" checked />
+                <label for="useImportedColor">Use imported colors</label>
               </div>
 
               <label for="materialSelect">Material</label>
@@ -1193,150 +1323,12 @@
               </div>
             </div>
           </div>
-
-          <!-- LIGHTS TAB -->
-          <div class="tab-panel" data-tab-panel="lights">
-            <div class="form-section">
-              <div class="form-section-title">Ambient Light</div>
-
-              <label for="ambientIntensity">Intensity</label>
-              <div class="slider-input">
-                <input id="ambientIntensity" type="range" min="0" max="2" step="0.05" value="0" />
-                <input type="text" class="value-input" data-for="ambientIntensity" value="0.00" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="ambientIntensity">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="ambientIntensity">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="ambientColor">Color</label>
-              <input id="ambientColor" type="color" value="#ffffff" />
-
-              <div style="height: 8px"></div>
-              <div class="checkbox-group">
-                <input id="shadowToggle" type="checkbox" checked />
-                <label for="shadowToggle">Cast shadows</label>
-              </div>
-            </div>
-
-            <div class="form-section">
-              <div class="form-section-title">
-                <div class="checkbox-group" style="margin-bottom:0">
-                  <input id="light1Enable" type="checkbox" checked />
-                  <label for="light1Enable">Key Light (camera-relative)</label>
-                </div>
-              </div>
-
-              <label for="light1Azimuth">Azimuth</label>
-              <div class="slider-input">
-                <input id="light1Azimuth" type="range" min="-180" max="180" step="1" value="-40" />
-                <input type="text" class="value-input" data-for="light1Azimuth" value="-40" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light1Azimuth">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light1Azimuth">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light1Elevation">Elevation</label>
-              <div class="slider-input">
-                <input id="light1Elevation" type="range" min="-85" max="85" step="1" value="-30" />
-                <input type="text" class="value-input" data-for="light1Elevation" value="-30" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light1Elevation">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light1Elevation">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light1Intensity">Intensity</label>
-              <div class="slider-input">
-                <input id="light1Intensity" type="range" min="0" max="20" step="0.05" value="5.0" />
-                <input type="text" class="value-input" data-for="light1Intensity" value="5.00" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light1Intensity">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light1Intensity">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light1Extent">Extent angle (degrees)</label>
-              <div class="slider-input">
-                <input id="light1Extent" type="range" min="0" max="60" step="1" value="22" />
-                <input type="text" class="value-input" data-for="light1Extent" value="22" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light1Extent">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light1Extent">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light1Color">Color</label>
-              <input id="light1Color" type="color" value="#ffffff" />
-            </div>
-
-            <div class="form-section">
-              <div class="form-section-title">
-                <div class="checkbox-group" style="margin-bottom:0">
-                  <input id="light2Enable" type="checkbox" checked />
-                  <label for="light2Enable">Fill Light (camera-relative)</label>
-                </div>
-              </div>
-
-              <label for="light2Azimuth">Azimuth</label>
-              <div class="slider-input">
-                <input id="light2Azimuth" type="range" min="-180" max="180" step="1" value="40" />
-                <input type="text" class="value-input" data-for="light2Azimuth" value="40" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light2Azimuth">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light2Azimuth">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light2Elevation">Elevation</label>
-              <div class="slider-input">
-                <input id="light2Elevation" type="range" min="-85" max="85" step="1" value="0" />
-                <input type="text" class="value-input" data-for="light2Elevation" value="0" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light2Elevation">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light2Elevation">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light2Intensity">Intensity</label>
-              <div class="slider-input">
-                <input id="light2Intensity" type="range" min="0" max="20" step="0.05" value="0.6" />
-                <input type="text" class="value-input" data-for="light2Intensity" value="0.60" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light2Intensity">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light2Intensity">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light2Extent">Extent angle (degrees)</label>
-              <div class="slider-input">
-                <input id="light2Extent" type="range" min="0" max="60" step="1" value="50" />
-                <input type="text" class="value-input" data-for="light2Extent" value="50" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="light2Extent">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="light2Extent">◀</button>
-                </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="light2Color">Color</label>
-              <input id="light2Color" type="color" value="#ffffff" />
-            </div>
-          </div>
         </div>
       </aside>
 
       <main class="canvas-container">
         <canvas id="view"></canvas>
+        <div class="hover-box-overlay" id="hoverBoxOverlay"></div>
         <div class="render-overlay" id="renderOverlay"></div>
         <div class="loading-overlay" id="loadingOverlay">Loading...</div>
       </main>

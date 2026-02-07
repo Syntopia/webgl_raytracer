@@ -8,9 +8,6 @@ ROOT = Path(__file__).resolve().parent
 
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("application/json", ".json")
-mimetypes.add_type("model/gltf+json", ".gltf")
-mimetypes.add_type("model/gltf-binary", ".glb")
-mimetypes.add_type("application/octet-stream", ".bin")
 mimetypes.add_type("image/vnd.radiance", ".hdr")
 mimetypes.add_type("application/wasm", ".wasm")
 

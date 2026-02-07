@@ -1,7 +1,7 @@
 import { createLogger } from "./logger.js";
-import { loadGltfFromText } from "./gltf.js";
 import { applyOrbitDragToRotation, resolveRotationLock } from "./camera_orbit.js";
 import { primTypeLabel, traceSceneRay } from "./ray_pick.js";
+import { computePrimitiveWorldBounds, projectAabbToCanvasRect } from "./overlay_bbox.js";
 import { buildUnifiedBVH, flattenBVH } from "./bvh.js";
 import {
   packBvhNodes, packTriangles, packTriNormals, packTriColors, packTriFlags, packPrimIndices,
@@ -49,6 +49,7 @@ const canvas = document.getElementById("view");
 const canvasContainer = canvas?.closest(".canvas-container");
 const renderOverlay = document.getElementById("renderOverlay");
 const loadingOverlay = document.getElementById("loadingOverlay");
+const hoverBoxOverlay = document.getElementById("hoverBoxOverlay");
 const statusEl = document.getElementById("status");
 const logger = createLogger(statusEl);
 
@@ -66,7 +67,6 @@ const analyticSkySunIntensityInput = document.getElementById("analyticSkySunInte
 const analyticSkySunRadiusInput = document.getElementById("analyticSkySunRadius");
 const analyticSkyGroundAlbedoInput = document.getElementById("analyticSkyGroundAlbedo");
 const analyticSkyHorizonSoftnessInput = document.getElementById("analyticSkyHorizonSoftness");
-const fileInput = document.getElementById("fileInput");
 const molFileInput = document.getElementById("molFileInput");
 const pdbIdInput = document.getElementById("pdbIdInput");
 const loadPdbIdBtn = document.getElementById("loadPdbId");
@@ -83,10 +83,9 @@ const volumeGaussianScale = document.getElementById("volumeGaussianScale");
 const clipEnableToggle = document.getElementById("clipEnable");
 const clipDistanceInput = document.getElementById("clipDistance");
 const clipLockToggle = document.getElementById("clipLock");
-const renderBtn = document.getElementById("renderBtn");
 const scaleSelect = document.getElementById("scaleSelect");
 const fastScaleSelect = document.getElementById("fastScaleSelect");
-const useGltfColorToggle = document.getElementById("useGltfColor");
+const useImportedColorToggle = document.getElementById("useImportedColor");
 const baseColorInput = document.getElementById("baseColor");
 const materialSelect = document.getElementById("materialSelect");
 const metallicInput = document.getElementById("metallic");
@@ -168,7 +167,7 @@ const renderState = {
   frameIndex: 0,
   cameraDirty: true,
   useBvh: true,
-  useGltfColor: true,
+  useImportedColor: true,
   baseColor: [0.8, 0.8, 0.8],
   materialMode: "metallic",
   metallic: 0.0,
@@ -243,77 +242,7 @@ const pointerState = {
   y: 0
 };
 
-async function fetchText(url) {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ${url}`);
-  }
-  return await res.text();
-}
-
-async function loadGltfText(text, baseUrl = null) {
-  logger.info("Parsing glTF");
-  const { positions, indices, normals, triColors } = await loadGltfFromText(text, baseUrl, fetch);
-  logger.info(`Loaded ${positions.length / 3} vertices, ${indices.length / 3} triangles`);
-  if (positions.length === 0 || indices.length === 0) {
-    throw new Error(
-      `Loaded empty geometry (positions: ${positions.length}, indices: ${indices.length}).`
-    );
-  }
-
-  // Empty sphere/cylinder arrays for glTF (will be populated by SDF/PDB loader)
-  const spheres = [];
-  const cylinders = [];
-  const triFlags = new Float32Array(indices.length / 3);
-
-  logger.info("Building unified SAH BVH on CPU");
-  const bvh = buildUnifiedBVH(
-    { positions, indices },
-    spheres,
-    cylinders,
-    { maxLeafSize: 4, maxDepth: 32 }
-  );
-  logger.info(`BVH nodes: ${bvh.nodes.length}, primitives: ${bvh.primitives.length}`);
-
-  const flat = flattenBVH(bvh.nodes, bvh.primitives, bvh.triCount, bvh.sphereCount, bvh.cylinderCount);
-
-  sceneData = {
-    positions,
-    indices,
-    normals,
-    triColors,
-    triFlags,
-    hasSurfaceFlags: hasSurfaceFlags(triFlags),
-    nodes: bvh.nodes,
-    tris: bvh.tris,
-    primitives: bvh.primitives,
-    primIndexBuffer: flat.primIndexBuffer,
-    triCount: bvh.triCount,
-    sphereCount: bvh.sphereCount,
-    cylinderCount: bvh.cylinderCount,
-    spheres,
-    cylinders,
-    sceneScale: 1.0
-  };
-  updateClipRange();
-  renderState.frameIndex = 0;
-  renderState.cameraDirty = true;
-
-  const bounds = computeBounds(positions);
-  if (bounds) {
-    logger.info(
-      `Bounds min (${bounds.minX.toFixed(2)}, ${bounds.minY.toFixed(2)}, ${bounds.minZ.toFixed(2)}) max (${bounds.maxX.toFixed(2)}, ${bounds.maxY.toFixed(2)}, ${bounds.maxZ.toFixed(2)})`
-    );
-    const dx = bounds.maxX - bounds.minX;
-    const dy = bounds.maxY - bounds.minY;
-    const dz = bounds.maxZ - bounds.minZ;
-    sceneData.sceneScale = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
-    const suggestedBias = Math.max(1e-5, sceneData.sceneScale * 1e-5);
-    renderState.rayBias = suggestedBias;
-    renderState.tMin = suggestedBias;
-    applyCameraToBounds(bounds);
-  }
-}
+let hoverOverlayErrorMessage = null;
 
 /**
  * Create a test scene with spheres and cylinders for debugging.
@@ -1119,7 +1048,7 @@ function setActiveTab(name) {
 }
 
 function updateMaterialState() {
-  renderState.useGltfColor = useGltfColorToggle.checked;
+  renderState.useImportedColor = useImportedColorToggle.checked;
   renderState.baseColor = hexToRgb(baseColorInput.value);
   renderState.materialMode = materialSelect?.value || "metallic";
   renderState.metallic = clamp(Number(metallicInput.value), 0, 1);
@@ -1723,6 +1652,18 @@ function buildCameraRayFromCanvasPixel(camera, canvasX, canvasY) {
   return normalizeVec3(dir);
 }
 
+function tracePointerHit(camera) {
+  if (!sceneData) {
+    return null;
+  }
+  const rayDir = buildCameraRayFromCanvasPixel(camera, pointerState.x, pointerState.y);
+  const clip = getActiveClipPlane(camera);
+  return traceSceneRay(sceneData, camera.origin, rayDir, {
+    tMin: Math.max(1e-6, renderState.tMin),
+    clip: clip.enabled ? { normal: clip.normal, offset: clip.offset, side: clip.side, enabled: true } : null
+  });
+}
+
 function getActiveClipPlane(camera) {
   const enabled = Boolean(renderState.clipEnabled);
   const camForward = normalizeVec3(camera.forward);
@@ -1757,6 +1698,63 @@ function getActiveClipPlane(camera) {
   return { enabled, normal, offset, side };
 }
 
+function hideHoverBoxOverlay() {
+  if (!hoverBoxOverlay) return;
+  hoverBoxOverlay.style.display = "none";
+}
+
+function drawHoverBoxOverlay(box) {
+  if (!hoverBoxOverlay || !canvas || !canvasContainer) return;
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const offsetLeft = canvasRect.left - containerRect.left;
+  const offsetTop = canvasRect.top - containerRect.top;
+  hoverBoxOverlay.style.left = `${offsetLeft + box.minX}px`;
+  hoverBoxOverlay.style.top = `${offsetTop + box.minY}px`;
+  hoverBoxOverlay.style.width = `${box.width}px`;
+  hoverBoxOverlay.style.height = `${box.height}px`;
+  hoverBoxOverlay.style.display = "block";
+}
+
+function updateHoverBoxOverlay(camera = null) {
+  if (!hoverBoxOverlay || !canvas) return;
+  if (!sceneData || !pointerState.overCanvas) {
+    hideHoverBoxOverlay();
+    return;
+  }
+
+  const activeCamera = camera || computeCameraVectors();
+  const hit = tracePointerHit(activeCamera);
+  if (!hit) {
+    hideHoverBoxOverlay();
+    return;
+  }
+
+  const canvasWidth = Math.max(1, Math.floor(canvas.clientWidth));
+  const canvasHeight = Math.max(1, Math.floor(canvas.clientHeight));
+  const bounds = computePrimitiveWorldBounds(sceneData, hit.primType, hit.primIndex);
+  const box = projectAabbToCanvasRect(bounds, activeCamera, canvasWidth, canvasHeight);
+  if (!box) {
+    hideHoverBoxOverlay();
+    return;
+  }
+  drawHoverBoxOverlay(box);
+}
+
+function safeUpdateHoverBoxOverlay(camera = null) {
+  try {
+    updateHoverBoxOverlay(camera);
+    hoverOverlayErrorMessage = null;
+  } catch (err) {
+    hideHoverBoxOverlay();
+    const msg = err?.message || String(err);
+    if (hoverOverlayErrorMessage !== msg) {
+      hoverOverlayErrorMessage = msg;
+      logger.warn(`[hover] ${msg}`);
+    }
+  }
+}
+
 function autofocusFromMouseRay() {
   if (!sceneData) {
     logger.warn("Focus not updated: no scene is loaded.");
@@ -1771,12 +1769,7 @@ function autofocusFromMouseRay() {
   }
 
   const camera = computeCameraVectors();
-  const rayDir = buildCameraRayFromCanvasPixel(camera, pointerState.x, pointerState.y);
-  const clip = getActiveClipPlane(camera);
-  const hit = traceSceneRay(sceneData, camera.origin, rayDir, {
-    tMin: Math.max(1e-6, renderState.tMin),
-    clip: clip.enabled ? { normal: clip.normal, offset: clip.offset, side: clip.side, enabled: true } : null
-  });
+  const hit = tracePointerHit(camera);
 
   if (!hit) {
     logger.info("Focus not updated: no object found under mouse.");
@@ -2063,7 +2056,7 @@ setTraceUniforms(gl, traceProgram, {
     volumeMaxSteps: renderState.volumeMaxSteps,
     volumeThreshold: renderState.volumeThreshold,
     useBvh: renderState.useBvh ? 1 : 0,
-    useGltfColor: renderState.useGltfColor ? 1 : 0,
+    useImportedColor: renderState.useImportedColor ? 1 : 0,
     baseColor: renderState.baseColor,
     metallic: renderState.metallic,
     roughness: renderState.roughness,
@@ -2130,21 +2123,19 @@ setTraceUniforms(gl, traceProgram, {
     renderOverlay.textContent = `${renderState.frameIndex}/${maxFrames} ${formatPolyCount(polyCount)} plys, ${formatPolyCount(primCount)} prims`;
     renderOverlay.style.display = "block";
   }
+  safeUpdateHoverBoxOverlay(camera);
 }
 
 async function startRenderLoop() {
   if (isRendering) {
     return;
   }
-  renderBtn.disabled = true;
-  renderBtn.textContent = "Pause";
   isRendering = true;
   logger.info("Interactive render started.");
   let lastTime = performance.now();
 
   const loop = (time) => {
     if (!isRendering) {
-      renderBtn.disabled = false;
       return;
     }
     const movingNow = isCameraInteracting(time);
@@ -2170,8 +2161,6 @@ async function startRenderLoop() {
     } catch (err) {
       logger.error(err.message || String(err));
       isRendering = false;
-      renderBtn.disabled = false;
-      renderBtn.textContent = "Render";
       return;
     }
     requestAnimationFrame(loop);
@@ -2185,7 +2174,6 @@ function stopRenderLoop() {
     return;
   }
   isRendering = false;
-  renderBtn.textContent = "Render";
   if (renderOverlay) {
     renderOverlay.style.display = "none";
   }
@@ -2195,7 +2183,6 @@ function stopRenderLoop() {
 async function loadExampleScene(url) {
   if (isLoading) return;
   isLoading = true;
-  renderBtn.disabled = true;
   setLoadingOverlay(true, "Loading scene...");
   let success = false;
   try {
@@ -2208,23 +2195,20 @@ async function loadExampleScene(url) {
     } else if (url === "__test_10000_spheres__") {
       loadRandomSpheres(10000);
       success = true;
-    } else if (url.startsWith("__sdf_")) {
-      // Built-in SDF molecule
-      const molName = url.replace("__sdf_", "").replace("__", "");
+    } else if (url.startsWith("mol:")) {
+      const molName = url.slice(4);
       await loadBuiltinMolecule(molName);
       success = true;
-    } else {
-      logger.info(`Loading example: ${url}`);
-      const text = await fetchText(url);
-      const baseUrl = new URL(url, window.location.href).toString();
-      await loadGltfText(text, baseUrl);
-      logger.info("Example loaded.");
+    } else if (url.startsWith("pdb:")) {
+      const pdbId = url.slice(4);
+      await loadPDBById(pdbId);
       success = true;
+    } else {
+      throw new Error(`Unsupported example selection: ${url}`);
     }
   } catch (err) {
     logger.error(err.message || String(err));
   } finally {
-    renderBtn.disabled = false;
     isLoading = false;
     glState = null;
     setLoadingOverlay(false);
@@ -2234,55 +2218,13 @@ async function loadExampleScene(url) {
 
 loadExampleBtn.addEventListener("click", async () => {
   const value = exampleSelect.value;
-  renderBtn.disabled = true;
   setLoadingOverlay(true, "Loading example...");
   let loaded = false;
   try {
-    if (value.startsWith("mol:")) {
-      // Small molecule (SDF)
-      const molName = value.slice(4);
-      await loadBuiltinMolecule(molName);
-      glState = null;
-      loaded = true;
-    } else if (value.startsWith("pdb:")) {
-      // Protein (PDB)
-      const pdbId = value.slice(4);
-      await loadPDBById(pdbId);
-      glState = null;
-      loaded = true;
-    } else {
-      // glTF or test scene
-      loaded = await loadExampleScene(value);
-    }
+    loaded = await loadExampleScene(value);
   } catch (err) {
     logger.error(err.message || String(err));
   } finally {
-    renderBtn.disabled = false;
-    setLoadingOverlay(false);
-  }
-  if (loaded && sceneData) {
-    await startRenderLoop();
-  }
-});
-
-// Load glTF file from file input
-fileInput.addEventListener("change", async () => {
-  renderBtn.disabled = true;
-  setLoadingOverlay(true, "Loading glTF...");
-  let loaded = false;
-  try {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    logger.info(`Loading file: ${file.name}`);
-    const text = await file.text();
-    await loadGltfText(text, null);
-    logger.info("File loaded.");
-    glState = null;
-    loaded = true;
-  } catch (err) {
-    logger.error(err.message || String(err));
-  } finally {
-    renderBtn.disabled = false;
     setLoadingOverlay(false);
   }
   if (loaded && sceneData) {
@@ -2292,7 +2234,6 @@ fileInput.addEventListener("change", async () => {
 
 // Load molecular file from file input
 molFileInput.addEventListener("change", async () => {
-  renderBtn.disabled = true;
   setLoadingOverlay(true, "Loading molecule...");
   let loaded = false;
   try {
@@ -2305,7 +2246,6 @@ molFileInput.addEventListener("change", async () => {
   } catch (err) {
     logger.error(err.message || String(err));
   } finally {
-    renderBtn.disabled = false;
     setLoadingOverlay(false);
   }
   if (loaded && sceneData) {
@@ -2314,7 +2254,6 @@ molFileInput.addEventListener("change", async () => {
 });
 
 loadPdbIdBtn.addEventListener("click", async () => {
-  renderBtn.disabled = true;
   setLoadingOverlay(true, "Fetching PDB...");
   let loaded = false;
   try {
@@ -2328,7 +2267,6 @@ loadPdbIdBtn.addEventListener("click", async () => {
   } catch (err) {
     logger.error(err.message || String(err));
   } finally {
-    renderBtn.disabled = false;
     setLoadingOverlay(false);
   }
   if (loaded && sceneData) {
@@ -2336,16 +2274,9 @@ loadPdbIdBtn.addEventListener("click", async () => {
   }
 });
 
-renderBtn.addEventListener("click", async () => {
-  if (isRendering) {
-    stopRenderLoop();
-    return;
-  }
-  await startRenderLoop();
-});
-
 canvas.addEventListener("mousedown", (event) => {
   updatePointerFromMouseEvent(event);
+  safeUpdateHoverBoxOverlay();
   inputState.dragging = true;
   inputState.lastX = event.clientX;
   inputState.lastY = event.clientY;
@@ -2376,13 +2307,17 @@ canvasContainer?.addEventListener("contextmenu", (event) => {
 
 canvas.addEventListener("mouseleave", () => {
   pointerState.overCanvas = false;
+  hideHoverBoxOverlay();
   inputState.dragging = false;
   inputState.rotateAxisLock = null;
 });
 
 canvas.addEventListener("mousemove", (event) => {
   updatePointerFromMouseEvent(event);
-  if (!inputState.dragging) return;
+  if (!inputState.dragging) {
+    safeUpdateHoverBoxOverlay();
+    return;
+  }
   const dx = event.clientX - inputState.lastX;
   const dy = event.clientY - inputState.lastY;
   inputState.lastX = event.clientX;
@@ -2407,6 +2342,7 @@ canvas.addEventListener("mousemove", (event) => {
     cameraState.target[1] += up[1] * dy * panScale;
     cameraState.target[2] += up[2] * dy * panScale;
     renderState.cameraDirty = true;
+    safeUpdateHoverBoxOverlay();
     return;
   }
 
@@ -2417,6 +2353,7 @@ canvas.addEventListener("mousemove", (event) => {
     const maxDist = Math.max(100, sceneScale * 20);
     cameraState.distance = clamp(cameraState.distance * zoom, minDist, maxDist);
     renderState.cameraDirty = true;
+    safeUpdateHoverBoxOverlay();
     return;
   }
   inputState.rotateAxisLock = resolveRotationLock(inputState.rotateAxisLock, dx, dy);
@@ -2427,6 +2364,7 @@ canvas.addEventListener("mousemove", (event) => {
   const lockDy = inputState.rotateAxisLock === "pitch" ? dy : 0;
   applyOrbitDrag(lockDx, lockDy);
   renderState.cameraDirty = true;
+  safeUpdateHoverBoxOverlay();
 });
 
 canvas.addEventListener("wheel", (event) => {
@@ -2439,6 +2377,7 @@ canvas.addEventListener("wheel", (event) => {
   cameraState.distance = clamp(cameraState.distance * zoom, minDist, maxDist);
   renderState.cameraDirty = true;
   markInteractionActive();
+  safeUpdateHoverBoxOverlay();
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
@@ -2531,7 +2470,7 @@ tabButtons.forEach((button) => {
   });
 });
 
-useGltfColorToggle.addEventListener("change", updateMaterialState);
+useImportedColorToggle.addEventListener("change", updateMaterialState);
 clipEnableToggle?.addEventListener("change", () => updateClipState({ preserveLock: true }));
 clipDistanceInput?.addEventListener("input", () => updateClipState({ preserveLock: true }));
 clipLockToggle?.addEventListener("change", () => updateClipState({ preserveLock: false }));
@@ -2707,7 +2646,7 @@ loadEnvManifest().then(() => {
     logger.info("Autorun enabled via query string.");
     loadExampleScene(exampleSelect.value).then(() => startRenderLoop());
   } else {
-    logger.info("Ready. Load an example or choose a .gltf file.");
+    logger.info("Ready. Load an example or choose a molecular file.");
   }
 
   updateMaterialState();

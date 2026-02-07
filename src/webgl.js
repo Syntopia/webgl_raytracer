@@ -75,7 +75,7 @@ const int PRIM_TRIANGLE = 0;
 const int PRIM_SPHERE = 1;
 const int PRIM_CYLINDER = 2;
 uniform int uUseBvh;
-uniform int uUseGltfColor;
+uniform int uUseImportedColor;
 uniform vec3 uBaseColor;
 uniform float uMetallic;
 uniform float uRoughness;
@@ -1252,14 +1252,14 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
       if (dot(shadingNormal, geomNormal) < 0.0) {
         shadingNormal = -shadingNormal;
       }
-      baseColor = mix(uBaseColor, fetchTriColor(primIndex), float(uUseGltfColor));
+      baseColor = mix(uBaseColor, fetchTriColor(primIndex), float(uUseImportedColor));
     } else if (primType == PRIM_SPHERE) {
       vec4 s = fetchSphere(primIndex);
       geomNormalRaw = normalize(hitPos - s.xyz);
       frontFace = dot(geomNormalRaw, dir) < 0.0;
       geomNormal = frontFace ? geomNormalRaw : -geomNormalRaw;
       shadingNormal = geomNormal;
-      baseColor = mix(uBaseColor, fetchSphereColor(primIndex), float(uUseGltfColor));
+      baseColor = mix(uBaseColor, fetchSphereColor(primIndex), float(uUseImportedColor));
     } else { // PRIM_CYLINDER
       vec3 p1, p2; float radius;
       fetchCylinder(primIndex, p1, p2, radius);
@@ -1268,7 +1268,7 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
       frontFace = dot(geomNormalRaw, dir) < 0.0;
       geomNormal = frontFace ? geomNormalRaw : -geomNormalRaw;
       shadingNormal = geomNormal;
-      baseColor = mix(uBaseColor, fetchCylinderColor(primIndex), float(uUseGltfColor));
+      baseColor = mix(uBaseColor, fetchCylinderColor(primIndex), float(uUseImportedColor));
     }
 
     vec3 V = normalize(-dir);
@@ -1806,7 +1806,7 @@ export function setTraceUniforms(gl, program, uniforms) {
   gl.uniform1i(gl.getUniformLocation(program, "uVolumeMaxSteps"), uniforms.volumeMaxSteps ?? 0);
   gl.uniform1f(gl.getUniformLocation(program, "uVolumeThreshold"), uniforms.volumeThreshold ?? 0.0);
   gl.uniform1i(gl.getUniformLocation(program, "uUseBvh"), uniforms.useBvh);
-  gl.uniform1i(gl.getUniformLocation(program, "uUseGltfColor"), uniforms.useGltfColor);
+  gl.uniform1i(gl.getUniformLocation(program, "uUseImportedColor"), uniforms.useImportedColor);
   gl.uniform3fv(gl.getUniformLocation(program, "uBaseColor"), uniforms.baseColor);
   gl.uniform1f(gl.getUniformLocation(program, "uMetallic"), uniforms.metallic);
   gl.uniform1f(gl.getUniformLocation(program, "uRoughness"), uniforms.roughness);
