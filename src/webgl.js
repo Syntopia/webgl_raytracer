@@ -95,6 +95,9 @@ uniform float uClipOffset;
 uniform float uClipSide;
 uniform int uMaxBounces;
 uniform float uExposure;
+uniform int uDofEnabled;
+uniform float uDofAperture;
+uniform float uDofFocusDistance;
 uniform float uAmbientIntensity;
 uniform vec3 uAmbientColor;
 uniform int uSamplesPerBounce;
@@ -896,6 +899,12 @@ float rand(inout uint state) {
   return float((word >> 22u) ^ word) / 4294967295.0;
 }
 
+vec2 sampleDisk(inout uint state) {
+  float r = sqrt(rand(state));
+  float phi = 2.0 * PI * rand(state);
+  return vec2(cos(phi), sin(phi)) * r;
+}
+
 // Sample direction from environment map using importance sampling
 // Returns sampled direction and PDF
 vec3 sampleEnvDirection(inout uint seed, out float pdf) {
@@ -1019,6 +1028,16 @@ vec3 reflectSample(vec3 dir, vec3 n, float roughness, inout uint state) {
   return normalize(tangent * local.x + bitangent * local.y + r * local.z);
 }
 
+vec3 sampleAroundDirection(vec3 axis, float roughness, inout uint state) {
+  vec3 a = normalize(axis);
+  if (roughness <= 0.02) {
+    return a;
+  }
+  float coneAngle = clamp(roughness * roughness * 0.75, 0.0, 1.2);
+  float dummyPdf;
+  return sampleConeDirection(a, coneAngle, state, dummyPdf);
+}
+
 vec3 sampleGGXHalfVector(vec3 n, float roughness, inout uint state) {
   float a = roughness * roughness;
   float a2 = a * a;
@@ -1075,8 +1094,8 @@ float geometrySmith(float NdotV, float NdotL, float roughness) {
 vec3 shadeDirect(vec3 hitPos, vec3 shadingNormal, vec3 geomNormal, vec3 baseColor, vec3 V, inout uint seed) {
   vec3 direct = vec3(0.0);
   float bias = max(uRayBias, 1e-4);
-  bool useMatte = uMaterialMode != 0;
-  float metallic = useMatte ? 0.0 : uMetallic;
+  bool useMatte = uMaterialMode == 1;
+  float metallic = uMaterialMode == 0 ? uMetallic : 0.0;
   float rough = useMatte ? uMatteRoughness : uRoughness;
   float diffRough = useMatte ? uMatteDiffuseRoughness : 0.0;
   float wrap = useMatte ? uWrapDiffuse : 0.0;
@@ -1254,7 +1273,13 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
 
     vec3 V = normalize(-dir);
 
-    if (uMaterialMode == 2 && primType == PRIM_TRIANGLE && (uSurfaceFlagMode == 0 || fetchTriFlag(primIndex) > 0.5)) {
+    bool surfaceGlassHit = (
+      uMaterialMode == 2
+      && primType == PRIM_TRIANGLE
+      && (uSurfaceFlagMode == 0 || fetchTriFlag(primIndex) > 0.5)
+    );
+    bool translucentPlasticHit = (uMaterialMode == 3);
+    if (surfaceGlassHit || translucentPlasticHit) {
       // Check opacity first - if opaque, fall through to normal surface shading
       if (rand(seed) >= uSurfaceOpacity) {
         vec3 N = geomNormal;
@@ -1266,12 +1291,17 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
         vec3 refrDir;
         bool canRefract = refractDir(dir, N, eta, refrDir);
         float reflectProb = canRefract ? F : 1.0;
+        float transRough = translucentPlasticHit ? clamp(uRoughness, 0.02, 1.0) : 0.0;
 
         if (rand(seed) < reflectProb) {
-          dir = normalize(reflect(dir, N));
+          dir = translucentPlasticHit
+            ? reflectSample(dir, N, transRough, seed)
+            : normalize(reflect(dir, N));
           origin = hitPos + N * bias;
         } else {
-          dir = normalize(refrDir);
+          dir = translucentPlasticHit
+            ? sampleAroundDirection(refrDir, transRough, seed)
+            : normalize(refrDir);
           vec3 tint = mix(vec3(1.0), baseColor, uSurfaceTransmission);
           throughput *= tint;
           origin = hitPos - N * bias;
@@ -1286,8 +1316,8 @@ vec3 tracePath(vec3 origin, vec3 dir, inout uint seed) {
     vec3 direct = shadeDirect(hitPos, shadingNormal, geomNormal, baseColor, V, seed);
     radiance += throughput * direct;
 
-    bool useMatte = uMaterialMode != 0;
-    float metallic = useMatte ? 0.0 : uMetallic;
+    bool useMatte = uMaterialMode == 1;
+    float metallic = uMaterialMode == 0 ? uMetallic : 0.0;
     float rough = useMatte ? uMatteRoughness : uRoughness;
     float diffRough = useMatte ? uMatteDiffuseRoughness : 0.0;
     float wrap = useMatte ? uWrapDiffuse : 0.0;
@@ -1498,7 +1528,22 @@ void main() {
     vec2 pixel = gl_FragCoord.xy + jitter;
     vec2 uvJittered = (pixel + vec2(0.5)) / uResolution * 2.0 - 1.0;
     vec3 dirJittered = normalize(uCamForward + uvJittered.x * uCamRight + uvJittered.y * uCamUp);
-    sum += tracePath(uCamOrigin, dirJittered, seed);
+    vec3 rayOrigin = uCamOrigin;
+    vec3 rayDir = dirJittered;
+
+    if (uDofEnabled == 1 && uDofAperture > 1e-6) {
+      vec3 forwardN = normalize(uCamForward);
+      vec3 rightN = normalize(uCamRight);
+      vec3 upN = normalize(uCamUp);
+      float denom = max(dot(dirJittered, forwardN), 1e-4);
+      float tFocus = uDofFocusDistance / denom;
+      vec3 focusPoint = uCamOrigin + dirJittered * tFocus;
+      vec2 lens = sampleDisk(seed) * uDofAperture;
+      rayOrigin = uCamOrigin + rightN * lens.x + upN * lens.y;
+      rayDir = normalize(focusPoint - rayOrigin);
+    }
+
+    sum += tracePath(rayOrigin, rayDir, seed);
   }
   vec3 color = sum / float(spp);
   color *= uExposure;
@@ -1704,6 +1749,19 @@ export function createTextureUnit3D(gl, texture, unit) {
   gl.bindTexture(gl.TEXTURE_3D, texture);
 }
 
+function mapMaterialMode(materialMode) {
+  if (materialMode === "matte" || materialMode === 1) {
+    return 1;
+  }
+  if (materialMode === "surface-glass" || materialMode === 2) {
+    return 2;
+  }
+  if (materialMode === "translucent-plastic" || materialMode === 3) {
+    return 3;
+  }
+  return 0;
+}
+
 export function setTraceUniforms(gl, program, uniforms) {
   gl.useProgram(program);
   gl.uniform1i(gl.getUniformLocation(program, "uBvhTex"), uniforms.bvhUnit);
@@ -1752,12 +1810,7 @@ export function setTraceUniforms(gl, program, uniforms) {
   gl.uniform3fv(gl.getUniformLocation(program, "uBaseColor"), uniforms.baseColor);
   gl.uniform1f(gl.getUniformLocation(program, "uMetallic"), uniforms.metallic);
   gl.uniform1f(gl.getUniformLocation(program, "uRoughness"), uniforms.roughness);
-  let materialMode = 0;
-  if (uniforms.materialMode === "matte" || uniforms.materialMode === 1) {
-    materialMode = 1;
-  } else if (uniforms.materialMode === "surface-glass" || uniforms.materialMode === 2) {
-    materialMode = 2;
-  }
+  const materialMode = mapMaterialMode(uniforms.materialMode);
   gl.uniform1i(gl.getUniformLocation(program, "uMaterialMode"), materialMode);
   gl.uniform1f(gl.getUniformLocation(program, "uMatteSpecular"), uniforms.matteSpecular ?? 0.03);
   gl.uniform1f(gl.getUniformLocation(program, "uMatteRoughness"), uniforms.matteRoughness ?? 0.5);
@@ -1774,6 +1827,9 @@ export function setTraceUniforms(gl, program, uniforms) {
   gl.uniform1f(gl.getUniformLocation(program, "uClipSide"), uniforms.clipSide ?? 1.0);
   gl.uniform1i(gl.getUniformLocation(program, "uMaxBounces"), uniforms.maxBounces);
   gl.uniform1f(gl.getUniformLocation(program, "uExposure"), uniforms.exposure);
+  gl.uniform1i(gl.getUniformLocation(program, "uDofEnabled"), uniforms.dofEnabled ?? 0);
+  gl.uniform1f(gl.getUniformLocation(program, "uDofAperture"), uniforms.dofAperture ?? 0.0);
+  gl.uniform1f(gl.getUniformLocation(program, "uDofFocusDistance"), uniforms.dofFocusDistance ?? 4.0);
   gl.uniform1f(gl.getUniformLocation(program, "uAmbientIntensity"), uniforms.ambientIntensity);
   gl.uniform3fv(gl.getUniformLocation(program, "uAmbientColor"), uniforms.ambientColor);
   gl.uniform1i(gl.getUniformLocation(program, "uSamplesPerBounce"), uniforms.samplesPerBounce);
@@ -1825,4 +1881,8 @@ export function setDisplayUniforms(gl, program, uniforms) {
 
 export function drawFullscreen(gl) {
   gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+export function __test__mapMaterialMode(materialMode) {
+  return mapMaterialMode(materialMode);
 }

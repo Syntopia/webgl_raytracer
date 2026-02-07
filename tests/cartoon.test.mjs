@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   __test__buildResidues,
+  __test__computeRibbonHalfWidths,
   __test__computeSheetStrandDiagnostics,
   __test__computeSheetNormals,
+  __test__trimPolylineTail,
   buildBackboneCartoon
 } from "../src/cartoon.js";
 
@@ -309,4 +311,66 @@ test("sheet normals are computed per strand, not as one sheet-wide average", () 
   const nC = normalize(normals[4]);
   const alignment = Math.abs(dot(nA, nC));
   assert(alignment < 0.8, "Different strand neighborhoods should produce different strand normals");
+});
+
+test("pinched ribbon cross-section keeps middle wider than top/bottom edges", () => {
+  const profile = __test__computeRibbonHalfWidths(2.8, 0.72);
+  assert(profile.halfW > profile.edgeHalfW, "Expected center half-width to be wider than edge half-width");
+  assert.equal(profile.halfW, 1.4, "Center half-width should match half the requested width");
+  assert.equal(Number(profile.edgeHalfW.toFixed(3)), 1.008, "Edge half-width should use edge scaling");
+});
+
+test("beta arrow trimming shortens strand body before arrowhead", () => {
+  const points = [
+    [0, 0, 0],
+    [4, 0, 0],
+    [8, 0, 0]
+  ];
+  const normals = [
+    [0, 1, 0],
+    [0, 1, 0],
+    [0, 1, 0]
+  ];
+
+  const trimmed = __test__trimPolylineTail(points, normals, 2.5);
+  assert(trimmed, "Expected strand tail trim data");
+  assert(Math.abs(trimmed.basePoint[0] - 5.5) < 1e-6, "Arrow base should be pulled back from strand end");
+  assert(Math.abs(trimmed.arrowLength - 2.5) < 1e-6, "Trimmed arrow length should match request");
+  assert.equal(trimmed.bodyPoints.length, 3, "Body should include split point");
+  assert(Math.abs(trimmed.bodyPoints[trimmed.bodyPoints.length - 1][0] - 5.5) < 1e-6, "Body should end at arrow base");
+});
+
+test("helix cross-section segments increase geometry detail", () => {
+  const atoms = [];
+  for (let i = 0; i < 8; i += 1) {
+    atoms.push(...makeResidueAtoms(i));
+  }
+  const molData = {
+    atoms,
+    bonds: [],
+    secondary: {
+      helices: [{ chainId: "A", startSeq: 1, endSeq: 8, endChainId: "A" }],
+      sheets: []
+    }
+  };
+
+  const coarse = buildBackboneCartoon(molData, {
+    helixCrossSectionSegments: 1,
+    helixSubdivisions: 2,
+    loopSubdivisions: 1
+  });
+  const fine = buildBackboneCartoon(molData, {
+    helixCrossSectionSegments: 4,
+    helixSubdivisions: 2,
+    loopSubdivisions: 1
+  });
+
+  assert(
+    fine.positions.length > coarse.positions.length,
+    "Expected more helix vertices for higher cross-section segment count"
+  );
+  assert(
+    fine.indices.length > coarse.indices.length,
+    "Expected more helix triangles for higher cross-section segment count"
+  );
 });

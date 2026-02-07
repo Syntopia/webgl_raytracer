@@ -130,6 +130,33 @@
         margin: 0 0 12px;
         color: var(--fg);
       }
+      .collapsible > summary {
+        list-style: none;
+        cursor: pointer;
+        user-select: none;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--fg);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .collapsible > summary::-webkit-details-marker {
+        display: none;
+      }
+      .collapsible > summary::after {
+        content: "▶";
+        font-size: 10px;
+        color: var(--fg-muted);
+        transform: rotate(0deg);
+        transition: transform 0.15s ease;
+      }
+      .collapsible[open] > summary::after {
+        transform: rotate(90deg);
+      }
+      .collapsible-body {
+        margin-top: 12px;
+      }
 
       label {
         display: block;
@@ -665,39 +692,143 @@
           <!-- RENDER TAB -->
           <div class="tab-panel" data-tab-panel="render">
             <div class="form-section">
-              <div class="form-section-title">Environment</div>
+              <details class="collapsible">
+                <summary>Environment</summary>
+                <div class="collapsible-body">
+                  <label for="envSelect">Environment map</label>
+                  <select id="envSelect">
+                    <option value="analytic://preetham-perez" selected>Analytic Sky (Preetham/Perez)</option>
+                    <option value="">None</option>
+                    <!-- Populated dynamically from assets/env/manifest.json -->
+                  </select>
 
-              <label for="envSelect">Environment map</label>
-              <select id="envSelect">
-                <option value="">None</option>
-                <!-- Populated dynamically from assets/env/manifest.json -->
-              </select>
+                  <div class="analytic-sky-controls">
+                    <div style="height: 12px"></div>
+                    <label for="analyticSkyResolution">Analytic resolution</label>
+                    <select id="analyticSkyResolution">
+                      <option value="512x256">512 x 256</option>
+                      <option value="1024x512" selected>1024 x 512</option>
+                      <option value="2048x1024">2048 x 1024</option>
+                    </select>
 
-              <div style="height: 12px"></div>
-              <label for="envIntensity">Environment intensity</label>
-              <div class="slider-input">
-                <input id="envIntensity" type="range" min="0" max="5" step="0.05" value="1" />
-                <input type="text" class="value-input" data-for="envIntensity" value="1.00" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="envIntensity">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="envIntensity">◀</button>
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkyTurbidity">Turbidity</label>
+                    <div class="slider-input">
+                      <input id="analyticSkyTurbidity" type="range" min="1.0" max="10.0" step="0.1" value="2.5" />
+                      <input type="text" class="value-input" data-for="analyticSkyTurbidity" value="2.5" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkyTurbidity">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkyTurbidity">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkySunAzimuth">Sun azimuth (deg)</label>
+                    <div class="slider-input">
+                      <input id="analyticSkySunAzimuth" type="range" min="-180" max="180" step="1" value="30" />
+                      <input type="text" class="value-input" data-for="analyticSkySunAzimuth" value="30" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkySunAzimuth">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkySunAzimuth">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkySunElevation">Sun elevation (deg)</label>
+                    <div class="slider-input">
+                      <input id="analyticSkySunElevation" type="range" min="-10" max="90" step="1" value="35" />
+                      <input type="text" class="value-input" data-for="analyticSkySunElevation" value="35" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkySunElevation">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkySunElevation">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkyIntensity">Sky intensity</label>
+                    <div class="slider-input">
+                      <input id="analyticSkyIntensity" type="range" min="0" max="20" step="0.1" value="1.0" />
+                      <input type="text" class="value-input" data-for="analyticSkyIntensity" value="1.0" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkyIntensity">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkyIntensity">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkySunIntensity">Sun intensity</label>
+                    <div class="slider-input">
+                      <input id="analyticSkySunIntensity" type="range" min="0" max="100" step="0.5" value="20" />
+                      <input type="text" class="value-input" data-for="analyticSkySunIntensity" value="20.0" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkySunIntensity">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkySunIntensity">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkySunRadius">Sun angular radius (deg)</label>
+                    <div class="slider-input">
+                      <input id="analyticSkySunRadius" type="range" min="0.05" max="1.50" step="0.01" value="0.27" />
+                      <input type="text" class="value-input" data-for="analyticSkySunRadius" value="0.27" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkySunRadius">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkySunRadius">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkyGroundAlbedo">Ground albedo</label>
+                    <div class="slider-input">
+                      <input id="analyticSkyGroundAlbedo" type="range" min="0.00" max="1.00" step="0.01" value="0.20" />
+                      <input type="text" class="value-input" data-for="analyticSkyGroundAlbedo" value="0.20" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkyGroundAlbedo">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkyGroundAlbedo">◀</button>
+                      </div>
+                    </div>
+
+                    <div style="height: 8px"></div>
+                    <label for="analyticSkyHorizonSoftness">Horizon softness</label>
+                    <div class="slider-input">
+                      <input id="analyticSkyHorizonSoftness" type="range" min="0.02" max="0.50" step="0.01" value="0.12" />
+                      <input type="text" class="value-input" data-for="analyticSkyHorizonSoftness" value="0.12" />
+                      <div class="step-buttons">
+                        <button type="button" class="step-btn" data-action="up" data-for="analyticSkyHorizonSoftness">▶</button>
+                        <button type="button" class="step-btn" data-action="down" data-for="analyticSkyHorizonSoftness">◀</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="height: 12px"></div>
+                  <label for="envIntensity">Environment intensity</label>
+                  <div class="slider-input">
+                    <input id="envIntensity" type="range" min="0" max="1.0" step="0.05" value="0.1" />
+                    <input type="text" class="value-input" data-for="envIntensity" value="0.10" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="envIntensity">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="envIntensity">◀</button>
+                    </div>
+                  </div>
+
+                  <div style="height: 8px"></div>
+                  <label for="envMaxLum">Max luminance (firefly reduction)</label>
+                  <div class="slider-input">
+                    <input id="envMaxLum" type="range" min="1" max="200" step="1" value="200" />
+                    <input type="text" class="value-input" data-for="envMaxLum" value="200" />
+                    <div class="step-buttons">
+                      <button type="button" class="step-btn" data-action="up" data-for="envMaxLum">▶</button>
+                      <button type="button" class="step-btn" data-action="down" data-for="envMaxLum">◀</button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-
-              <div style="height: 8px"></div>
-              <label for="envMaxLum">Max luminance (firefly reduction)</label>
-              <div class="slider-input">
-                <input id="envMaxLum" type="range" min="1" max="200" step="1" value="200" />
-                <input type="text" class="value-input" data-for="envMaxLum" value="200" />
-                <div class="step-buttons">
-                  <button type="button" class="step-btn" data-action="up" data-for="envMaxLum">▶</button>
-                  <button type="button" class="step-btn" data-action="down" data-for="envMaxLum">◀</button>
-                </div>
-              </div>
+              </details>
             </div>
 
             <div class="form-section">
-              <div class="form-section-title">Quality</div>
+              <details class="collapsible">
+                <summary>Quality settings</summary>
+                <div class="collapsible-body">
 
               <label for="scaleSelect">Render scale</label>
               <select id="scaleSelect">
@@ -714,13 +845,6 @@
                 <option value="0.75">0.75x</option>
                 <option value="0.5">0.5x</option>
                 <option value="0.25" selected>0.25x (Fast)</option>
-              </select>
-
-              <div style="height: 12px"></div>
-              <label for="bruteforceToggle">Traversal mode</label>
-              <select id="bruteforceToggle">
-                <option value="bvh" selected>BVH (Fast)</option>
-                <option value="bruteforce">Brute force</option>
               </select>
 
               <div style="height: 12px"></div>
@@ -767,6 +891,36 @@
                 </div>
               </div>
 
+              <div style="height: 12px"></div>
+              <div class="checkbox-group">
+                <input id="dofEnable" type="checkbox" />
+                <label for="dofEnable">Depth of field</label>
+              </div>
+
+              <div class="dof-controls" style="display:none">
+                <div style="height: 8px"></div>
+                <label for="dofAperture">Aperture radius (A)</label>
+                <div class="slider-input">
+                  <input id="dofAperture" type="range" min="0.0" max="1.0" step="0.005" value="0.03" />
+                  <input type="text" class="value-input" data-for="dofAperture" value="0.030" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="dofAperture">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="dofAperture">◀</button>
+                  </div>
+                </div>
+
+                <div style="height: 8px"></div>
+                <label for="dofFocusDistance">Focus distance (A)</label>
+                <div class="slider-input">
+                  <input id="dofFocusDistance" type="range" min="0.1" max="200.0" step="0.1" value="4.0" />
+                  <input type="text" class="value-input" data-for="dofFocusDistance" value="4.0" />
+                  <div class="step-buttons">
+                    <button type="button" class="step-btn" data-action="up" data-for="dofFocusDistance">▶</button>
+                    <button type="button" class="step-btn" data-action="down" data-for="dofFocusDistance">◀</button>
+                  </div>
+                </div>
+              </div>
+
               <div style="height: 8px"></div>
               <label for="toneMapSelect">Tone mapping</label>
               <select id="toneMapSelect">
@@ -774,13 +928,17 @@
                 <option value="aces" selected>Filmic (ACES)</option>
                 <option value="linear">Linear</option>
               </select>
+                </div>
+              </details>
             </div>
 
             <div class="form-section">
-              <div class="form-section-title">Volume Rendering</div>
-              <div style="font-size: 11px; color: var(--fg-muted); margin-bottom: 8px;">
-                Requires volume data from PDB import.
-              </div>
+              <details class="collapsible">
+                <summary>Volume Rendering settings</summary>
+                <div class="collapsible-body">
+                  <div style="font-size: 11px; color: var(--fg-muted); margin-bottom: 8px;">
+                    Requires volume data from PDB import.
+                  </div>
 
               <div class="checkbox-group">
                 <input id="volumeEnable" type="checkbox" />
@@ -844,10 +1002,14 @@
                   <button type="button" class="step-btn" data-action="down" data-for="volumeThreshold">◀</button>
                 </div>
               </div>
+                </div>
+              </details>
             </div>
 
             <div class="form-section">
-              <div class="form-section-title">Slice (triangles only)</div>
+              <details class="collapsible">
+                <summary>Slices</summary>
+                <div class="collapsible-body">
               <div class="checkbox-group">
                 <input id="clipEnable" type="checkbox" />
                 <label for="clipEnable">Enable slice plane</label>
@@ -868,17 +1030,8 @@
                 <input id="clipLock" type="checkbox" />
                 <label for="clipLock">Lock plane direction</label>
               </div>
-            </div>
-
-            <div class="form-section">
-              <div class="form-section-title">Advanced</div>
-
-              <label for="rayBias">Ray bias</label>
-              <input id="rayBias" type="number" min="0" step="0.000001" value="0.00001" />
-
-              <div style="height: 8px"></div>
-              <label for="tMin">tMin</label>
-              <input id="tMin" type="number" min="0" step="0.000001" value="0.00001" />
+                </div>
+              </details>
             </div>
 
             <button id="renderBtn">Render Frame</button>
@@ -911,6 +1064,7 @@
                 <option value="metallic" selected>Metallic (PBR)</option>
                 <option value="matte">Matte Protein</option>
                 <option value="surface-glass">Surface Glass</option>
+                <option value="translucent-plastic">Translucent Plastic</option>
               </select>
 
               <label for="baseColor">Base color (override)</label>

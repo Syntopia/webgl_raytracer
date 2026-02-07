@@ -3,16 +3,18 @@ const DEFAULT_OPTIONS = {
   loopRadius: 0.2,
   sheetWidth: 2.9,
   helixWidth: 2.7,
+  helixEdgeWidthScale: 0.72,
+  helixCrossSectionSegments: 3,
   helixThickness: 0.25,
   sheetThickness: 0.25,
-  helixSides: 14,
-  loopSides: 12,
-  helixSubdivisions: 6,
-  loopSubdivisions: 5,
-  sheetSubdivisions: 4,
+  helixSides: 20,
+  loopSides: 16,
+  helixSubdivisions: 8,
+  loopSubdivisions: 7,
+  sheetSubdivisions: 6,
   maxGap: 4.8,
   arrowBaseScale: 1.8,
-  arrowLength: 1.8,
+  arrowLength: 2.3,
   hbondDistance: 4.0,
   hbondEnergyCutoff: -0.5,
   colors: {
@@ -75,6 +77,12 @@ function vec3Blend(a, b, t) {
 function smoothstep(t) {
   const x = clamp(t, 0, 1);
   return x * x * (3 - 2 * x);
+}
+
+function computeRibbonHalfWidths(width, edgeWidthScale = 1.0) {
+  const halfW = width * 0.5;
+  const edgeHalfW = halfW * clamp(edgeWidthScale, 0.2, 1.0);
+  return { halfW, edgeHalfW };
 }
 
 function makeTaperedWidths(count, fullWidth, endWidth, fraction = 0.2) {
@@ -552,46 +560,157 @@ function appendRibbonVolume(out, points, normalHint, widths, thickness, colors, 
     frames = computeRibbonFrames(points, normalHint);
   }
   const halfT = thickness * 0.5;
+  const edgeWidthScale = colors.edgeWidthScale ?? 1.0;
+  const edgeProfileSegments = Math.max(1, Math.floor(colors.edgeProfileSegments ?? 1));
+  const profileRows = edgeProfileSegments * 2 + 1;
 
-  const leftTop = [];
-  const rightTop = [];
-  const leftBottom = [];
-  const rightBottom = [];
-  const normalsTop = [];
-  const normalsBottom = [];
-  const normalsLeft = [];
-  const normalsRight = [];
+  const leftProfiles = Array.from({ length: profileRows }, () => []);
+  const rightProfiles = Array.from({ length: profileRows }, () => []);
+  const leftProfileNormals = Array.from({ length: profileRows }, () => []);
+  const rightProfileNormals = Array.from({ length: profileRows }, () => []);
 
   for (let i = 0; i < points.length; i += 1) {
     const p = points[i];
     const n = frames.normals[i];
     const b = frames.binormals[i];
-    const halfW = widths[i] * 0.5;
+    const { halfW, edgeHalfW } = computeRibbonHalfWidths(widths[i], edgeWidthScale);
+    for (let row = 0; row < profileRows; row += 1) {
+      const t = row / (profileRows - 1);
+      const theta = (0.5 - t) * Math.PI;
+      const cosTheta = Math.cos(theta);
+      const sinTheta = Math.sin(theta);
+      const sideHalf = edgeHalfW + (halfW - edgeHalfW) * (cosTheta * cosTheta);
+      const vertical = halfT * sinTheta;
 
-    const leftCenter = vec3Sub(p, vec3Scale(b, halfW));
-    const rightCenter = vec3Add(p, vec3Scale(b, halfW));
-    const topOffset = vec3Scale(n, halfT);
-    const bottomOffset = vec3Scale(n, -halfT);
+      const leftPoint = vec3Add(vec3Sub(p, vec3Scale(b, sideHalf)), vec3Scale(n, vertical));
+      const rightPoint = vec3Add(vec3Add(p, vec3Scale(b, sideHalf)), vec3Scale(n, vertical));
+      leftProfiles[row].push(leftPoint);
+      rightProfiles[row].push(rightPoint);
 
-    leftTop.push(vec3Add(leftCenter, topOffset));
-    rightTop.push(vec3Add(rightCenter, topOffset));
-    leftBottom.push(vec3Add(leftCenter, bottomOffset));
-    rightBottom.push(vec3Add(rightCenter, bottomOffset));
-
-    normalsTop.push(n);
-    normalsBottom.push(vec3Scale(n, -1));
-    normalsLeft.push(vec3Scale(b, -1));
-    normalsRight.push(b);
+      const leftNormal = vec3Normalize(vec3Add(vec3Scale(b, -cosTheta), vec3Scale(n, sinTheta)));
+      const rightNormal = vec3Normalize(vec3Add(vec3Scale(b, cosTheta), vec3Scale(n, sinTheta)));
+      leftProfileNormals[row].push(leftNormal);
+      rightProfileNormals[row].push(rightNormal);
+    }
   }
 
   const topColor = colors.top || colors.side;
   const bottomColor = colors.bottom || colors.side;
   const sideColor = colors.side || colors.top || colors.bottom;
+  appendStrip(
+    out,
+    leftProfiles[0],
+    rightProfiles[0],
+    leftProfileNormals[0],
+    rightProfileNormals[0],
+    topColor,
+    false
+  );
+  appendStrip(
+    out,
+    leftProfiles[profileRows - 1],
+    rightProfiles[profileRows - 1],
+    leftProfileNormals[profileRows - 1],
+    rightProfileNormals[profileRows - 1],
+    bottomColor,
+    true
+  );
 
-  appendStrip(out, leftTop, rightTop, normalsTop, normalsTop, topColor, false);
-  appendStrip(out, leftBottom, rightBottom, normalsBottom, normalsBottom, bottomColor, true);
-  appendStrip(out, leftTop, leftBottom, normalsLeft, normalsLeft, sideColor, true);
-  appendStrip(out, rightTop, rightBottom, normalsRight, normalsRight, sideColor, false);
+  for (let row = 0; row < profileRows - 1; row += 1) {
+    appendStrip(
+      out,
+      leftProfiles[row],
+      leftProfiles[row + 1],
+      leftProfileNormals[row],
+      leftProfileNormals[row + 1],
+      sideColor,
+      true
+    );
+    appendStrip(
+      out,
+      rightProfiles[row],
+      rightProfiles[row + 1],
+      rightProfileNormals[row],
+      rightProfileNormals[row + 1],
+      sideColor,
+      false
+    );
+  }
+}
+
+function polylineLength(points) {
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i += 1) {
+    total += vec3Length(vec3Sub(points[i + 1], points[i]));
+  }
+  return total;
+}
+
+function trimPolylineTail(points, vectors, tailLength, minBodyLength = 0.6) {
+  if (points.length < 2) {
+    return null;
+  }
+  if (vectors && vectors.length !== points.length) {
+    throw new Error("trimPolylineTail vectors length must match points length.");
+  }
+
+  const totalLength = polylineLength(points);
+  if (totalLength <= 1e-8) {
+    return null;
+  }
+
+  const maxTailLength = Math.max(0, totalLength - minBodyLength);
+  const clampedTailLength = clamp(tailLength, 0, maxTailLength);
+  if (clampedTailLength <= 1e-6) {
+    return null;
+  }
+
+  let remainingTail = clampedTailLength;
+  for (let i = points.length - 1; i >= 1; i -= 1) {
+    const p0 = points[i - 1];
+    const p1 = points[i];
+    const seg = vec3Sub(p1, p0);
+    const segLen = vec3Length(seg);
+    if (segLen <= 1e-8) {
+      continue;
+    }
+    if (remainingTail > segLen) {
+      remainingTail -= segLen;
+      continue;
+    }
+
+    const t = (segLen - remainingTail) / segLen;
+    const basePoint = vec3Blend(p0, p1, t);
+    const baseTangent = vec3Scale(seg, 1 / segLen);
+    const bodyPoints = points.slice(0, i);
+    bodyPoints.push(basePoint);
+
+    let bodyVectors = null;
+    if (vectors) {
+      bodyVectors = vectors.slice(0, i);
+      const v0 = vectors[i - 1] || vectors[0];
+      const v1 = vectors[i] || v0;
+      let vSplit = vec3Blend(v0, v1, t);
+      if (vec3Length(vSplit) <= 1e-8) {
+        vSplit = v0;
+      }
+      vSplit = vec3Normalize(vSplit);
+      if (bodyVectors.length > 0 && vec3Dot(vSplit, bodyVectors[bodyVectors.length - 1]) < 0) {
+        vSplit = vec3Scale(vSplit, -1);
+      }
+      bodyVectors.push(vSplit);
+    }
+
+    return {
+      bodyPoints,
+      bodyVectors,
+      basePoint,
+      baseTangent,
+      arrowLength: clampedTailLength
+    };
+  }
+
+  return null;
 }
 
 function appendTrianglePrism(out, a, b, c, normal, thickness, color) {
@@ -1649,7 +1768,9 @@ export function buildBackboneCartoon(molData, options = {}) {
         {
           top: opts.colors.helixFront,
           bottom: opts.colors.helixBack,
-          side: opts.colors.helixFront
+          side: opts.colors.helixFront,
+          edgeWidthScale: opts.helixEdgeWidthScale,
+          edgeProfileSegments: opts.helixCrossSectionSegments
         },
         targetNormals,
         0.95
@@ -1661,39 +1782,42 @@ export function buildBackboneCartoon(molData, options = {}) {
         sheetPoints = resampleCatmullRom(sheetPoints, opts.sheetSubdivisions);
       }
 
-      const widths = new Array(sheetPoints.length).fill(opts.sheetWidth);
       const targetNormals = resampleSegmentNormals(segment.residues, sheetNormals, sheetPoints.length);
       const sheetNormal = targetNormals[0] || [0, 1, 0];
+      const arrowTail = trimPolylineTail(sheetPoints, targetNormals, opts.arrowLength);
+      const bodyPoints = arrowTail?.bodyPoints || sheetPoints;
+      const bodyNormals = arrowTail?.bodyVectors || targetNormals;
+      const bodyWidths = new Array(bodyPoints.length).fill(opts.sheetWidth);
 
       // Draw ribbon with local target normals derived from local inter-strand contact axes.
       appendRibbonVolume(
         out,
-        sheetPoints,
+        bodyPoints,
         sheetNormal,
-        widths,
+        bodyWidths,
         opts.sheetThickness,
         {
           top: opts.colors.sheet,
           bottom: opts.colors.sheet,
           side: opts.colors.sheet
         },
-        targetNormals,
+        bodyNormals,
         0.95
       );
 
-      // Arrow at the end
-      if (sheetPoints.length >= 2) {
-        const tangents = computeTangents(sheetPoints);
-        const lastT = tangents[tangents.length - 1];
-        const endNormal = targetNormals[targetNormals.length - 1] || sheetNormal;
+      // Arrow at the end: strand body is truncated so the arrowhead is the terminal geometry.
+      if (bodyPoints.length >= 2) {
+        const baseCenter = arrowTail?.basePoint || bodyPoints[bodyPoints.length - 1];
+        const lastT = arrowTail?.baseTangent || computeTangents(bodyPoints)[bodyPoints.length - 1];
+        const arrowLength = arrowTail?.arrowLength || opts.arrowLength;
+        const endNormal = bodyNormals[bodyNormals.length - 1] || sheetNormal;
         let binormal = vec3Cross(lastT, endNormal);
         if (vec3Length(binormal) < 1e-6) {
           binormal = pickPerpendicular(lastT);
         } else {
           binormal = vec3Normalize(binormal);
         }
-        const baseCenter = sheetPoints[sheetPoints.length - 1];
-        const tip = vec3Add(baseCenter, vec3Scale(lastT, opts.arrowLength));
+        const tip = vec3Add(baseCenter, vec3Scale(lastT, arrowLength));
         const baseHalf = (opts.sheetWidth * opts.arrowBaseScale) * 0.5;
         const baseLeft = vec3Sub(baseCenter, vec3Scale(binormal, baseHalf));
         const baseRight = vec3Add(baseCenter, vec3Scale(binormal, baseHalf));
@@ -1815,4 +1939,12 @@ export function __test__computeSheetNormals(residues, ss, hbonds, options = {}) 
 
 export function __test__computeSheetStrandDiagnostics(residues, ss, hbonds, sheetNormals, segments, options = {}) {
   return computeSheetStrandDiagnostics(residues, ss, hbonds, sheetNormals, segments, { ...DEFAULT_OPTIONS, ...options });
+}
+
+export function __test__trimPolylineTail(points, vectors, tailLength, minBodyLength = 0.6) {
+  return trimPolylineTail(points, vectors, tailLength, minBodyLength);
+}
+
+export function __test__computeRibbonHalfWidths(width, edgeWidthScale = 1.0) {
+  return computeRibbonHalfWidths(width, edgeWidthScale);
 }

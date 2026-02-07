@@ -1,11 +1,19 @@
 import { createLogger } from "./logger.js";
 import { loadGltfFromText } from "./gltf.js";
+import { applyOrbitDragToRotation, resolveRotationLock } from "./camera_orbit.js";
+import { primTypeLabel, traceSceneRay } from "./ray_pick.js";
 import { buildUnifiedBVH, flattenBVH } from "./bvh.js";
 import {
   packBvhNodes, packTriangles, packTriNormals, packTriColors, packTriFlags, packPrimIndices,
   packSpheres, packSphereColors, packCylinders, packCylinderColors
 } from "./packing.js";
 import { loadHDR, buildEnvSamplingData } from "./hdr.js";
+import {
+  ANALYTIC_SKY_ID,
+  analyticSkyCacheKey,
+  generateAnalyticSkyEnvironment,
+  normalizeAnalyticSkySettings
+} from "./analytic_sky.js";
 import {
   parsePDB,
   parseSDF,
@@ -49,6 +57,15 @@ const loadExampleBtn = document.getElementById("loadExample");
 const envSelect = document.getElementById("envSelect");
 const envIntensityInput = document.getElementById("envIntensity");
 const envMaxLumInput = document.getElementById("envMaxLum");
+const analyticSkyResolutionSelect = document.getElementById("analyticSkyResolution");
+const analyticSkyTurbidityInput = document.getElementById("analyticSkyTurbidity");
+const analyticSkySunAzimuthInput = document.getElementById("analyticSkySunAzimuth");
+const analyticSkySunElevationInput = document.getElementById("analyticSkySunElevation");
+const analyticSkyIntensityInput = document.getElementById("analyticSkyIntensity");
+const analyticSkySunIntensityInput = document.getElementById("analyticSkySunIntensity");
+const analyticSkySunRadiusInput = document.getElementById("analyticSkySunRadius");
+const analyticSkyGroundAlbedoInput = document.getElementById("analyticSkyGroundAlbedo");
+const analyticSkyHorizonSoftnessInput = document.getElementById("analyticSkyHorizonSoftness");
 const fileInput = document.getElementById("fileInput");
 const molFileInput = document.getElementById("molFileInput");
 const pdbIdInput = document.getElementById("pdbIdInput");
@@ -69,7 +86,6 @@ const clipLockToggle = document.getElementById("clipLock");
 const renderBtn = document.getElementById("renderBtn");
 const scaleSelect = document.getElementById("scaleSelect");
 const fastScaleSelect = document.getElementById("fastScaleSelect");
-const bruteforceToggle = document.getElementById("bruteforceToggle");
 const useGltfColorToggle = document.getElementById("useGltfColor");
 const baseColorInput = document.getElementById("baseColor");
 const materialSelect = document.getElementById("materialSelect");
@@ -87,10 +103,11 @@ const showSheetHbondsToggle = document.getElementById("showSheetHbonds");
 const surfaceOpacityInput = document.getElementById("surfaceOpacity");
 const maxBouncesInput = document.getElementById("maxBounces");
 const exposureInput = document.getElementById("exposure");
+const dofEnableToggle = document.getElementById("dofEnable");
+const dofApertureInput = document.getElementById("dofAperture");
+const dofFocusDistanceInput = document.getElementById("dofFocusDistance");
 const ambientIntensityInput = document.getElementById("ambientIntensity");
 const ambientColorInput = document.getElementById("ambientColor");
-const rayBiasInput = document.getElementById("rayBias");
-const tMinInput = document.getElementById("tMin");
 const samplesPerBounceInput = document.getElementById("samplesPerBounce");
 const maxFramesInput = document.getElementById("maxFrames");
 const toneMapSelect = document.getElementById("toneMapSelect");
@@ -118,7 +135,6 @@ const visModeSelect = document.getElementById("visModeSelect");
 
 const tabButtons = Array.from(document.querySelectorAll("[data-tab-button]"));
 const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
-
 
 let sceneData = null;
 let glState = null;
@@ -169,11 +185,15 @@ const renderState = {
   maxBounces: 4,
   maxFrames: 100,
   exposure: 1.0,
+  dofEnabled: false,
+  dofAperture: 0.03,
+  dofFocusDistance: 4.0,
   toneMap: "aces",
   ambientIntensity: 0.0,
   ambientColor: [1.0, 1.0, 1.0],
   envUrl: null,
-  envIntensity: 1.0,
+  envCacheKey: null,
+  envIntensity: 0.1,
   envMaxLuminance: 200.0,
   envData: null,
   rayBias: 1e-5,
@@ -208,13 +228,19 @@ const inputState = {
   dragging: false,
   lastX: 0,
   lastY: 0,
-  arcballPrev: null,
   dragMode: "rotate",
+  rotateAxisLock: null,
   keys: new Set()
 };
 
 const interactionState = {
   lastActive: 0
+};
+
+const pointerState = {
+  overCanvas: false,
+  x: 0,
+  y: 0
 };
 
 async function fetchText(url) {
@@ -283,8 +309,6 @@ async function loadGltfText(text, baseUrl = null) {
     const dz = bounds.maxZ - bounds.minZ;
     sceneData.sceneScale = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
     const suggestedBias = Math.max(1e-5, sceneData.sceneScale * 1e-5);
-    rayBiasInput.value = suggestedBias.toFixed(6);
-    tMinInput.value = suggestedBias.toFixed(6);
     renderState.rayBias = suggestedBias;
     renderState.tMin = suggestedBias;
     applyCameraToBounds(bounds);
@@ -388,8 +412,6 @@ function loadTestPrimitives() {
   const dz = bounds.maxZ - bounds.minZ;
   sceneData.sceneScale = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
   const suggestedBias = Math.max(1e-5, sceneData.sceneScale * 1e-5);
-  rayBiasInput.value = suggestedBias.toFixed(6);
-  tMinInput.value = suggestedBias.toFixed(6);
   renderState.rayBias = suggestedBias;
   renderState.tMin = suggestedBias;
   applyCameraToBounds(bounds);
@@ -511,8 +533,6 @@ function loadRandomSpheres(count) {
   const dz = bounds.maxZ - bounds.minZ;
   sceneData.sceneScale = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
   const suggestedBias = Math.max(1e-5, sceneData.sceneScale * 1e-5);
-  rayBiasInput.value = suggestedBias.toFixed(6);
-  tMinInput.value = suggestedBias.toFixed(6);
   renderState.rayBias = suggestedBias;
   renderState.tMin = suggestedBias;
   applyCameraToBounds(bounds);
@@ -655,7 +675,10 @@ async function loadMolecularFile(text, filename) {
     volumeData = buildNitrogenVolume(molData, volumeOpts);
   }
 
-  const surfaceAtomMode = renderState.materialMode === "surface-glass" && renderState.surfaceShowAtoms ? "all" : "hetero";
+  const surfaceAtomMode = (
+    (renderState.materialMode === "surface-glass" || renderState.materialMode === "translucent-plastic")
+    && renderState.surfaceShowAtoms
+  ) ? "all" : "hetero";
   lastMolContext = { spheres, cylinders, molData, options, volumeData, surfaceAtomMode };
   await loadMolecularGeometry(spheres, cylinders, molData, options, volumeData, surfaceAtomMode);
 }
@@ -966,8 +989,6 @@ async function loadMolecularGeometry(
   const dz = bounds.maxZ - bounds.minZ;
   sceneData.sceneScale = Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.5);
   const suggestedBias = Math.max(1e-5, sceneData.sceneScale * 1e-5);
-  rayBiasInput.value = suggestedBias.toFixed(6);
-  tMinInput.value = suggestedBias.toFixed(6);
   renderState.rayBias = suggestedBias;
   renderState.tMin = suggestedBias;
   applyCameraToBounds(bounds);
@@ -993,7 +1014,10 @@ async function loadPDBById(pdbId) {
   const volumeOpts = getVolumeImportOptions();
   const volumeData = volumeOpts.enabled ? buildNitrogenVolume(molData, volumeOpts) : null;
 
-  const surfaceAtomMode = renderState.materialMode === "surface-glass" && renderState.surfaceShowAtoms ? "all" : "hetero";
+  const surfaceAtomMode = (
+    (renderState.materialMode === "surface-glass" || renderState.materialMode === "translucent-plastic")
+    && renderState.surfaceShowAtoms
+  ) ? "all" : "hetero";
   lastMolContext = { spheres, cylinders, molData, options, volumeData, surfaceAtomMode };
   await loadMolecularGeometry(spheres, cylinders, molData, options, volumeData, surfaceAtomMode);
 }
@@ -1009,7 +1033,10 @@ async function loadBuiltinMolecule(name) {
   const options = getMolecularDisplayOptions();
   const { spheres, cylinders } = moleculeToGeometry(molData, options);
 
-  const surfaceAtomMode = renderState.materialMode === "surface-glass" && renderState.surfaceShowAtoms ? "all" : "hetero";
+  const surfaceAtomMode = (
+    (renderState.materialMode === "surface-glass" || renderState.materialMode === "translucent-plastic")
+    && renderState.surfaceShowAtoms
+  ) ? "all" : "hetero";
   lastMolContext = { spheres, cylinders, molData, options, volumeData: null, surfaceAtomMode };
   await loadMolecularGeometry(spheres, cylinders, molData, options, null, surfaceAtomMode);
 }
@@ -1108,11 +1135,23 @@ function updateMaterialState() {
   renderState.surfaceOpacity = clamp(Number(surfaceOpacityInput?.value ?? 0.0), 0.0, 1.0);
   renderState.maxBounces = clamp(Number(maxBouncesInput.value), 0, 6);
   renderState.exposure = clamp(Number(exposureInput.value), 0, 5);
+  renderState.dofEnabled = dofEnableToggle?.checked ?? false;
+  const dofAperture = requireNumberInput(dofApertureInput, "Depth-of-field aperture");
+  const dofFocusDistance = requireNumberInput(dofFocusDistanceInput, "Depth-of-field focus distance");
+  if (dofAperture < 0.0 || dofAperture > 1.0) {
+    throw new Error("Depth-of-field aperture must be between 0 and 1.0.");
+  }
+  if (dofFocusDistance <= 0.0 || dofFocusDistance > 1000.0) {
+    throw new Error("Depth-of-field focus distance must be > 0 and <= 1000.");
+  }
+  renderState.dofAperture = dofAperture;
+  renderState.dofFocusDistance = dofFocusDistance;
   renderState.ambientIntensity = clamp(Number(ambientIntensityInput.value), 0, 2);
   renderState.ambientColor = hexToRgb(ambientColorInput.value);
-  renderState.envIntensity = clamp(Number(envIntensityInput.value), 0, 5);
-  renderState.rayBias = clamp(Number(rayBiasInput.value), 0, 1);
-  renderState.tMin = clamp(Number(tMinInput.value), 0, 1);
+  renderState.envIntensity = clamp(Number(envIntensityInput.value), 0, 1.0);
+  renderState.useBvh = true;
+  renderState.rayBias = clamp(renderState.rayBias, 1e-7, 1);
+  renderState.tMin = clamp(renderState.tMin, 1e-7, 1);
   renderState.samplesPerBounce = clamp(Number(samplesPerBounceInput.value), 1, 8);
   renderState.castShadows = shadowToggle.checked;
   renderState.toneMap = toneMapSelect?.value || "reinhard";
@@ -1171,14 +1210,48 @@ function updateMaterialVisibility() {
   const surfaceGroup = document.querySelector(".material-surface");
   if (metallicGroup) metallicGroup.style.display = mode === "metallic" ? "block" : "none";
   if (matteGroup) matteGroup.style.display = mode === "matte" ? "block" : "none";
-  if (surfaceGroup) surfaceGroup.style.display = mode === "surface-glass" ? "block" : "none";
+  if (surfaceGroup) {
+    surfaceGroup.style.display = (mode === "surface-glass" || mode === "translucent-plastic") ? "block" : "none";
+  }
+}
+
+function updateDofVisibility() {
+  const controls = document.querySelector(".dof-controls");
+  if (!controls) return;
+  controls.style.display = dofEnableToggle?.checked ? "block" : "none";
+}
+
+function setSliderValue(input, value) {
+  if (!input) return;
+  input.value = String(value);
+  const valueInput = document.querySelector(`.value-input[data-for="${input.id}"]`);
+  if (valueInput) {
+    const step = parseFloat(input.step) || 1;
+    const decimals = step < 1 ? Math.max(0, -Math.floor(Math.log10(step))) : 0;
+    valueInput.value = Number(value).toFixed(decimals);
+  }
+}
+
+function applyMaterialPreset(mode) {
+  if (mode !== "translucent-plastic") return;
+  // Dielectric translucent plastic defaults.
+  setSliderValue(metallicInput, 0.0);
+  setSliderValue(roughnessInput, 0.22);
+  setSliderValue(rimBoostInput, 0.0);
+  setSliderValue(surfaceIorInput, 1.46);
+  setSliderValue(surfaceTransmissionInput, 0.55);
+  setSliderValue(surfaceOpacityInput, 0.15);
+  logger.info("Applied preset: Translucent Plastic");
 }
 
 async function refreshSurfaceAtomMode() {
   if (!lastMolContext || !lastMolContext.molData) return;
   const surfaceMode = surfaceModeSelect?.value || "none";
   if (surfaceMode === "none") return;
-  const desiredMode = renderState.materialMode === "surface-glass" && renderState.surfaceShowAtoms ? "all" : "hetero";
+  const usesSurfaceTranslucency = (
+    renderState.materialMode === "surface-glass" || renderState.materialMode === "translucent-plastic"
+  );
+  const desiredMode = usesSurfaceTranslucency && renderState.surfaceShowAtoms ? "all" : "hetero";
   if (lastMolContext.surfaceAtomMode === desiredMode) return;
   lastMolContext.surfaceAtomMode = desiredMode;
   logger.info(`Reloading molecular geometry for surface (${desiredMode} atoms).`);
@@ -1239,83 +1312,160 @@ function updateClipState({ preserveLock = false } = {}) {
   resetAccumulation("Slice plane updated.");
 }
 
-async function loadEnvironment(url) {
+function parseAnalyticResolution(value) {
+  if (!value || typeof value !== "string") {
+    throw new Error("Analytic sky resolution is missing.");
+  }
+  const parts = value.toLowerCase().split("x").map((v) => Number(v));
+  if (parts.length !== 2 || !Number.isInteger(parts[0]) || !Number.isInteger(parts[1])) {
+    throw new Error(`Invalid analytic sky resolution: ${value}`);
+  }
+  return { width: parts[0], height: parts[1] };
+}
+
+function getAnalyticSkySettingsFromUi() {
+  const { width, height } = parseAnalyticResolution(analyticSkyResolutionSelect?.value || "");
+  return normalizeAnalyticSkySettings({
+    width,
+    height,
+    turbidity: requireNumberInput(analyticSkyTurbidityInput, "Analytic sky turbidity"),
+    sunAzimuthDeg: requireNumberInput(analyticSkySunAzimuthInput, "Analytic sky sun azimuth"),
+    sunElevationDeg: requireNumberInput(analyticSkySunElevationInput, "Analytic sky sun elevation"),
+    skyIntensity: requireNumberInput(analyticSkyIntensityInput, "Analytic sky intensity"),
+    sunIntensity: requireNumberInput(analyticSkySunIntensityInput, "Analytic sky sun intensity"),
+    sunAngularRadiusDeg: requireNumberInput(analyticSkySunRadiusInput, "Analytic sky sun radius"),
+    groundAlbedo: requireNumberInput(analyticSkyGroundAlbedoInput, "Analytic sky ground albedo"),
+    horizonSoftness: requireNumberInput(analyticSkyHorizonSoftnessInput, "Analytic sky horizon softness")
+  });
+}
+
+function updateEnvironmentVisibility() {
+  const analyticControls = document.querySelector(".analytic-sky-controls");
+  if (!analyticControls) return;
+  const selected = envSelect?.value || "";
+  analyticControls.style.display = selected === ANALYTIC_SKY_ID ? "block" : "none";
+}
+
+function uploadEnvironmentToGl(env) {
+  if (!glState || !env) return;
+  const gl = glState.gl;
+  if (glState.envTex && glState.envTex !== glState.blackEnvTex) {
+    gl.deleteTexture(glState.envTex);
+  }
+  if (glState.envMarginalCdfTex && glState.envMarginalCdfTex !== glState.dummyCdfTex) {
+    gl.deleteTexture(glState.envMarginalCdfTex);
+  }
+  if (
+    glState.envConditionalCdfTex
+    && glState.envConditionalCdfTex !== glState.dummyCdfTex
+    && glState.envConditionalCdfTex !== glState.envMarginalCdfTex
+  ) {
+    gl.deleteTexture(glState.envConditionalCdfTex);
+  }
+
+  glState.envTex = createEnvTexture(gl, env.width, env.height, env.data);
+  glState.envMarginalCdfTex = createCdfTexture(
+    gl,
+    env.samplingData.marginalCdf,
+    env.samplingData.height + 1,
+    1
+  );
+  glState.envConditionalCdfTex = createCdfTexture(
+    gl,
+    env.samplingData.conditionalCdf,
+    env.samplingData.width + 1,
+    env.samplingData.height
+  );
+  glState.envSize = [env.width, env.height];
+  glState.envUrl = renderState.envUrl;
+  glState.envCacheKey = env.version || renderState.envCacheKey;
+}
+
+async function loadEnvironment(url, analyticSettings = null) {
   if (!url) {
     renderState.envUrl = null;
+    renderState.envCacheKey = null;
     renderState.envData = null;
     if (glState) {
+      const gl = glState.gl;
       if (glState.envTex && glState.envTex !== glState.blackEnvTex) {
-        glState.gl.deleteTexture(glState.envTex);
+        gl.deleteTexture(glState.envTex);
+      }
+      if (glState.envMarginalCdfTex && glState.envMarginalCdfTex !== glState.dummyCdfTex) {
+        gl.deleteTexture(glState.envMarginalCdfTex);
+      }
+      if (glState.envConditionalCdfTex && glState.envConditionalCdfTex !== glState.dummyCdfTex) {
+        gl.deleteTexture(glState.envConditionalCdfTex);
       }
       glState.envTex = glState.blackEnvTex;
+      glState.envMarginalCdfTex = glState.dummyCdfTex;
+      glState.envConditionalCdfTex = glState.dummyCdfTex;
       glState.envSize = [1, 1];
       glState.envUrl = null;
+      glState.envCacheKey = null;
     }
     return;
   }
 
-  if (envCache.has(url)) {
-    renderState.envData = envCache.get(url);
+  let env = null;
+  if (url === ANALYTIC_SKY_ID) {
+    if (!analyticSettings) {
+      throw new Error("Analytic sky settings are required.");
+    }
+    const settings = normalizeAnalyticSkySettings(analyticSettings);
+    const key = `${ANALYTIC_SKY_ID}:${analyticSkyCacheKey(settings)}`;
+    if (envCache.has(key)) {
+      env = envCache.get(key);
+    } else {
+      logger.info("Generating analytic sky (Preetham/Perez) with WebGPU...");
+      env = await generateAnalyticSkyEnvironment(settings, logger);
+      env.samplingData = buildEnvSamplingData(env.data, env.width, env.height);
+      env.version = key;
+      envCache.set(key, env);
+    }
+  } else if (envCache.has(url)) {
+    env = envCache.get(url);
   } else {
     logger.info(`Loading environment: ${url}`);
-    const env = await loadHDR(url, logger);
-    // Build importance sampling data
+    env = await loadHDR(url, logger);
     env.samplingData = buildEnvSamplingData(env.data, env.width, env.height);
+    env.version = url;
     envCache.set(url, env);
-    renderState.envData = env;
   }
+
+  renderState.envData = env;
   renderState.envUrl = url;
+  renderState.envCacheKey = env.version || url;
 
   if (glState && renderState.envData) {
-    if (glState.envTex && glState.envTex !== glState.blackEnvTex) {
-      glState.gl.deleteTexture(glState.envTex);
-    }
-    if (glState.envMarginalCdfTex) {
-      glState.gl.deleteTexture(glState.envMarginalCdfTex);
-    }
-    if (glState.envConditionalCdfTex) {
-      glState.gl.deleteTexture(glState.envConditionalCdfTex);
-    }
-    glState.envTex = createEnvTexture(
-      glState.gl,
-      renderState.envData.width,
-      renderState.envData.height,
-      renderState.envData.data
-    );
-    // Create CDF textures for importance sampling
-    const samplingData = renderState.envData.samplingData;
-    glState.envMarginalCdfTex = createCdfTexture(
-      glState.gl,
-      samplingData.marginalCdf,
-      samplingData.height + 1,
-      1
-    );
-    glState.envConditionalCdfTex = createCdfTexture(
-      glState.gl,
-      samplingData.conditionalCdf,
-      samplingData.width + 1,
-      samplingData.height
-    );
-    glState.envSize = [renderState.envData.width, renderState.envData.height];
-    glState.envUrl = url;
+    uploadEnvironmentToGl(renderState.envData);
   }
 }
 
 async function updateEnvironmentState() {
   setLoadingOverlay(true, "Loading environment...");
-  renderState.envIntensity = clamp(Number(envIntensityInput.value), 0, 5);
+  renderState.envIntensity = clamp(Number(envIntensityInput.value), 0, 1.0);
   renderState.envMaxLuminance = clamp(Number(envMaxLumInput?.value ?? 50), 0, 500);
   const url = envSelect.value || null;
-  if (url !== renderState.envUrl) {
-    try {
+  let envChanged = false;
+
+  try {
+    if (url === ANALYTIC_SKY_ID) {
+      const analyticSettings = getAnalyticSkySettingsFromUi();
+      const analyticKey = `${ANALYTIC_SKY_ID}:${analyticSkyCacheKey(analyticSettings)}`;
+      if (url !== renderState.envUrl || analyticKey !== renderState.envCacheKey) {
+        await loadEnvironment(url, analyticSettings);
+        envChanged = true;
+      }
+    } else if (url !== renderState.envUrl) {
       await loadEnvironment(url);
-      resetAccumulation("Environment updated.");
-    } catch (err) {
-      logger.error(err.message || String(err));
+      envChanged = true;
     }
-  } else {
-    resetAccumulation("Environment intensity updated.");
+    resetAccumulation(envChanged ? "Environment updated." : "Environment intensity updated.");
+  } catch (err) {
+    logger.error(err.message || String(err));
   }
+
   setLoadingOverlay(false);
 }
 
@@ -1519,16 +1669,138 @@ function updateCameraFromInput(dt) {
   return moved;
 }
 
-function arcballVector(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  const y = 1 - ((clientY - rect.top) / rect.height) * 2;
-  const len2 = x * x + y * y;
-  if (len2 <= 1) {
-    return [x, y, Math.sqrt(1 - len2)];
+function applyOrbitDrag(dx, dy) {
+  cameraState.rotation = applyOrbitDragToRotation(cameraState.rotation, dx, dy);
+}
+
+function isTextEntryTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function updatePointerFromMouseEvent(event) {
+  if (!canvas) {
+    throw new Error("Render canvas is missing.");
   }
-  const len = Math.sqrt(len2) || 1;
-  return [x / len, y / len, 0];
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    throw new Error("Canvas has invalid size for pointer tracking.");
+  }
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  pointerState.x = clamp(x, 0, rect.width);
+  pointerState.y = clamp(y, 0, rect.height);
+  pointerState.overCanvas = true;
+}
+
+function normalizeVec3(v) {
+  const len = Math.hypot(v[0], v[1], v[2]);
+  if (len < 1e-10) {
+    throw new Error("Cannot normalize zero-length vector.");
+  }
+  return [v[0] / len, v[1] / len, v[2] / len];
+}
+
+function buildCameraRayFromCanvasPixel(camera, canvasX, canvasY) {
+  if (!canvas) {
+    throw new Error("Render canvas is missing.");
+  }
+  const width = Math.max(1, Math.floor(canvas.clientWidth));
+  const height = Math.max(1, Math.floor(canvas.clientHeight));
+  if (width <= 0 || height <= 0) {
+    throw new Error("Canvas size is invalid for ray picking.");
+  }
+
+  const ndcX = (canvasX / width) * 2.0 - 1.0;
+  const ndcY = 1.0 - (canvasY / height) * 2.0;
+  const dir = [
+    camera.forward[0] + camera.right[0] * ndcX + camera.up[0] * ndcY,
+    camera.forward[1] + camera.right[1] * ndcX + camera.up[1] * ndcY,
+    camera.forward[2] + camera.right[2] * ndcX + camera.up[2] * ndcY
+  ];
+  return normalizeVec3(dir);
+}
+
+function getActiveClipPlane(camera) {
+  const enabled = Boolean(renderState.clipEnabled);
+  const camForward = normalizeVec3(camera.forward);
+  let normal = camForward;
+  let offset = 0.0;
+  let side = 1.0;
+
+  if (renderState.clipLocked && renderState.clipLockedNormal) {
+    normal = normalizeVec3(renderState.clipLockedNormal);
+    if (renderState.clipLockedOffset != null) {
+      offset = renderState.clipLockedOffset;
+    }
+    if (renderState.clipLockedSide != null) {
+      side = renderState.clipLockedSide;
+    }
+  }
+
+  if (enabled && !(renderState.clipLocked && renderState.clipLockedOffset != null)) {
+    const planePoint = [
+      camera.origin[0] + normal[0] * renderState.clipDistance,
+      camera.origin[1] + normal[1] * renderState.clipDistance,
+      camera.origin[2] + normal[2] * renderState.clipDistance
+    ];
+    offset = normal[0] * planePoint[0] + normal[1] * planePoint[1] + normal[2] * planePoint[2];
+  }
+
+  if (enabled && !(renderState.clipLocked && renderState.clipLockedSide != null)) {
+    const camSide = normal[0] * camera.origin[0] + normal[1] * camera.origin[1] + normal[2] * camera.origin[2] - offset;
+    side = camSide >= 0 ? 1 : -1;
+  }
+
+  return { enabled, normal, offset, side };
+}
+
+function autofocusFromMouseRay() {
+  if (!sceneData) {
+    logger.warn("Focus not updated: no scene is loaded.");
+    return;
+  }
+  if (!pointerState.overCanvas) {
+    logger.info("Focus not updated: mouse is not over the render canvas.");
+    return;
+  }
+  if (!dofFocusDistanceInput) {
+    throw new Error("Depth-of-field focus distance input is missing.");
+  }
+
+  const camera = computeCameraVectors();
+  const rayDir = buildCameraRayFromCanvasPixel(camera, pointerState.x, pointerState.y);
+  const clip = getActiveClipPlane(camera);
+  const hit = traceSceneRay(sceneData, camera.origin, rayDir, {
+    tMin: Math.max(1e-6, renderState.tMin),
+    clip: clip.enabled ? { normal: clip.normal, offset: clip.offset, side: clip.side, enabled: true } : null
+  });
+
+  if (!hit) {
+    logger.info("Focus not updated: no object found under mouse.");
+    return;
+  }
+
+  const minFocus = Number(dofFocusDistanceInput.min);
+  const maxFocus = Number(dofFocusDistanceInput.max);
+  if (!Number.isFinite(minFocus) || !Number.isFinite(maxFocus)) {
+    throw new Error("Depth-of-field focus slider range is invalid.");
+  }
+  const clampedFocus = clamp(hit.t, minFocus, maxFocus);
+  setSliderValue(dofFocusDistanceInput, clampedFocus);
+  dofFocusDistanceInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+  const message = `Focal distance updated to ${clampedFocus.toFixed(1)}`;
+  logger.info(
+    `[focus] ${message} (hit ${primTypeLabel(hit.primType)} ${hit.primIndex}, t=${hit.t.toFixed(3)})`
+  );
+  if (Math.abs(clampedFocus - hit.t) > 1e-6) {
+    logger.warn(
+      `[focus] Requested hit distance ${hit.t.toFixed(3)} exceeded focus slider range [${minFocus}, ${maxFocus}].`
+    );
+  }
 }
 
 function ensureWebGL() {
@@ -1559,7 +1831,8 @@ function ensureWebGL() {
         envConditionalCdfTex: dummyCdfTex,
         dummyCdfTex,
         envSize: [1, 1],
-        envUrl: null
+        envUrl: null,
+        envCacheKey: null
       };
     } catch (err) {
       glInitFailed = true;
@@ -1650,18 +1923,8 @@ function renderFrame() {
     glState.textures = uploadSceneTextures(gl, maxTextureSize);
   }
 
-  if (renderState.envData && glState.envUrl !== renderState.envUrl) {
-    if (glState.envTex && glState.envTex !== glState.blackEnvTex) {
-      gl.deleteTexture(glState.envTex);
-    }
-    glState.envTex = createEnvTexture(
-      gl,
-      renderState.envData.width,
-      renderState.envData.height,
-      renderState.envData.data
-    );
-    glState.envSize = [renderState.envData.width, renderState.envData.height];
-    glState.envUrl = renderState.envUrl;
+  if (renderState.envData && glState.envCacheKey !== renderState.envCacheKey) {
+    uploadEnvironmentToGl(renderState.envData);
   }
 
   let volumeEnabled = renderState.volumeEnabled ? 1 : 0;
@@ -1721,31 +1984,11 @@ function renderFrame() {
   const lightDirs = renderState.lights.map((light) =>
     cameraRelativeLightDir(light.azimuth, light.elevation, camForward, camRight, camUp)
   );
-  const clipEnabled = renderState.clipEnabled ? 1 : 0;
-  let clipNormal = camForward;
-  let clipOffset = 0.0;
-  let clipSide = 1.0;
-  if (renderState.clipLocked && renderState.clipLockedNormal) {
-    clipNormal = renderState.clipLockedNormal;
-    if (renderState.clipLockedOffset != null) {
-      clipOffset = renderState.clipLockedOffset;
-    }
-    if (renderState.clipLockedSide != null) {
-      clipSide = renderState.clipLockedSide;
-    }
-  }
-  if (clipEnabled && !(renderState.clipLocked && renderState.clipLockedOffset != null)) {
-    const planePoint = [
-      camera.origin[0] + clipNormal[0] * renderState.clipDistance,
-      camera.origin[1] + clipNormal[1] * renderState.clipDistance,
-      camera.origin[2] + clipNormal[2] * renderState.clipDistance
-    ];
-    clipOffset = clipNormal[0] * planePoint[0] + clipNormal[1] * planePoint[1] + clipNormal[2] * planePoint[2];
-  }
-  if (clipEnabled && !(renderState.clipLocked && renderState.clipLockedSide != null)) {
-    const camSide = clipNormal[0] * camera.origin[0] + clipNormal[1] * camera.origin[1] + clipNormal[2] * camera.origin[2] - clipOffset;
-    clipSide = camSide >= 0 ? 1 : -1;
-  }
+  const clip = getActiveClipPlane(camera);
+  const clipEnabled = clip.enabled ? 1 : 0;
+  const clipNormal = clip.normal;
+  const clipOffset = clip.offset;
+  const clipSide = clip.side;
 
   gl.disable(gl.DEPTH_TEST);
   gl.bindVertexArray(vao);
@@ -1827,6 +2070,9 @@ setTraceUniforms(gl, traceProgram, {
     rimBoost: renderState.rimBoost,
     maxBounces: renderState.maxBounces,
     exposure: renderState.exposure,
+    dofEnabled: renderState.dofEnabled ? 1 : 0,
+    dofAperture: renderState.dofAperture,
+    dofFocusDistance: renderState.dofFocusDistance,
     ambientIntensity: renderState.ambientIntensity,
     ambientColor: renderState.ambientColor,
     envIntensity: renderState.envIntensity,
@@ -2099,10 +2345,11 @@ renderBtn.addEventListener("click", async () => {
 });
 
 canvas.addEventListener("mousedown", (event) => {
+  updatePointerFromMouseEvent(event);
   inputState.dragging = true;
   inputState.lastX = event.clientX;
   inputState.lastY = event.clientY;
-  inputState.arcballPrev = arcballVector(event.clientX, event.clientY);
+  inputState.rotateAxisLock = null;
   if (event.button === 2) {
     inputState.dragMode = "pan";
   } else if (event.shiftKey) {
@@ -2117,7 +2364,7 @@ canvas.addEventListener("mousedown", (event) => {
 
 canvas.addEventListener("mouseup", () => {
   inputState.dragging = false;
-  inputState.arcballPrev = null;
+  inputState.rotateAxisLock = null;
 });
 
 canvas.addEventListener("contextmenu", (event) => {
@@ -2128,11 +2375,13 @@ canvasContainer?.addEventListener("contextmenu", (event) => {
 });
 
 canvas.addEventListener("mouseleave", () => {
+  pointerState.overCanvas = false;
   inputState.dragging = false;
-  inputState.arcballPrev = null;
+  inputState.rotateAxisLock = null;
 });
 
 canvas.addEventListener("mousemove", (event) => {
+  updatePointerFromMouseEvent(event);
   if (!inputState.dragging) return;
   const dx = event.clientX - inputState.lastX;
   const dy = event.clientY - inputState.lastY;
@@ -2157,7 +2406,6 @@ canvas.addEventListener("mousemove", (event) => {
     cameraState.target[0] += up[0] * dy * panScale;
     cameraState.target[1] += up[1] * dy * panScale;
     cameraState.target[2] += up[2] * dy * panScale;
-    inputState.arcballPrev = arcballVector(event.clientX, event.clientY);
     renderState.cameraDirty = true;
     return;
   }
@@ -2168,30 +2416,17 @@ canvas.addEventListener("mousemove", (event) => {
     const minDist = Math.max(0.1, sceneScale * 0.1);
     const maxDist = Math.max(100, sceneScale * 20);
     cameraState.distance = clamp(cameraState.distance * zoom, minDist, maxDist);
-    inputState.arcballPrev = arcballVector(event.clientX, event.clientY);
     renderState.cameraDirty = true;
     return;
   }
-
-  const prev = inputState.arcballPrev ?? arcballVector(event.clientX, event.clientY);
-  const curr = arcballVector(event.clientX, event.clientY);
-  const dot = clamp(prev[0] * curr[0] + prev[1] * curr[1] + prev[2] * curr[2], -1, 1);
-  const angle = Math.acos(dot);
-  const axis = [
-    prev[1] * curr[2] - prev[2] * curr[1],
-    prev[2] * curr[0] - prev[0] * curr[2],
-    prev[0] * curr[1] - prev[1] * curr[0]
-  ];
-  const axisLen = Math.hypot(axis[0], axis[1], axis[2]);
-  if (axisLen > 1e-6 && angle > 1e-6) {
-    axis[0] /= axisLen;
-    axis[1] /= axisLen;
-    axis[2] /= axisLen;
-    const delta = quatFromAxisAngle(axis, angle);
-    cameraState.rotation = normalizeQuat(quatMultiply(cameraState.rotation, delta));
-    renderState.cameraDirty = true;
+  inputState.rotateAxisLock = resolveRotationLock(inputState.rotateAxisLock, dx, dy);
+  if (!inputState.rotateAxisLock) {
+    return;
   }
-  inputState.arcballPrev = curr;
+  const lockDx = inputState.rotateAxisLock === "yaw" ? dx : 0;
+  const lockDy = inputState.rotateAxisLock === "pitch" ? dy : 0;
+  applyOrbitDrag(lockDx, lockDy);
+  renderState.cameraDirty = true;
 });
 
 canvas.addEventListener("wheel", (event) => {
@@ -2207,7 +2442,19 @@ canvas.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
-  inputState.keys.add(event.key.toLowerCase());
+  const key = event.key.toLowerCase();
+  const isFocusShortcut = event.code === "KeyF" || key === "f";
+  if (isFocusShortcut && !event.repeat && !isTextEntryTarget(event.target)) {
+    try {
+      autofocusFromMouseRay();
+    } catch (err) {
+      const msg = err?.message || String(err);
+      logger.error(msg);
+    }
+    event.preventDefault();
+    return;
+  }
+  inputState.keys.add(key);
 });
 
 window.addEventListener("keyup", (event) => {
@@ -2241,6 +2488,7 @@ fastScaleSelect.addEventListener("change", () => {
 });
 
 envSelect.addEventListener("change", () => {
+  updateEnvironmentVisibility();
   updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
 });
 envIntensityInput.addEventListener("input", () => {
@@ -2249,17 +2497,38 @@ envIntensityInput.addEventListener("input", () => {
 envMaxLumInput?.addEventListener("input", () => {
   updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
 });
+analyticSkyResolutionSelect?.addEventListener("change", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkyTurbidityInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkySunAzimuthInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkySunElevationInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkyIntensityInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkySunIntensityInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkySunRadiusInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkyGroundAlbedoInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
+analyticSkyHorizonSoftnessInput?.addEventListener("input", () => {
+  updateEnvironmentState().catch((err) => logger.error(err.message || String(err)));
+});
 
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     setActiveTab(button.dataset.tabButton);
   });
-});
-
-bruteforceToggle.addEventListener("change", () => {
-  const mode = bruteforceToggle.value;
-  renderState.useBvh = mode !== "bruteforce";
-  resetAccumulation(`Traversal mode: ${renderState.useBvh ? "BVH" : "Brute force"}`);
 });
 
 useGltfColorToggle.addEventListener("change", updateMaterialState);
@@ -2286,6 +2555,7 @@ surfaceModeSelect?.addEventListener("change", async () => {
   refreshSurfaceAtomMode().catch((err) => logger.error(err.message || String(err)));
 });
 materialSelect?.addEventListener("change", () => {
+  applyMaterialPreset(materialSelect.value);
   updateMaterialVisibility();
   updateMaterialState();
   refreshSurfaceAtomMode().catch((err) => logger.error(err.message || String(err)));
@@ -2321,11 +2591,15 @@ showSheetHbondsToggle?.addEventListener("change", () => {
 surfaceOpacityInput?.addEventListener("input", updateMaterialState);
 maxBouncesInput.addEventListener("input", updateMaterialState);
 exposureInput.addEventListener("input", updateMaterialState);
+dofEnableToggle?.addEventListener("change", () => {
+  updateDofVisibility();
+  updateMaterialState();
+});
+dofApertureInput?.addEventListener("input", updateMaterialState);
+dofFocusDistanceInput?.addEventListener("input", updateMaterialState);
 toneMapSelect?.addEventListener("change", updateMaterialState);
 ambientIntensityInput.addEventListener("input", updateMaterialState);
 ambientColorInput.addEventListener("input", updateMaterialState);
-rayBiasInput.addEventListener("input", updateMaterialState);
-tMinInput.addEventListener("input", updateMaterialState);
 samplesPerBounceInput.addEventListener("input", updateMaterialState);
 maxFramesInput?.addEventListener("input", updateRenderLimits);
 shadowToggle.addEventListener("change", updateMaterialState);
@@ -2412,11 +2686,6 @@ async function loadEnvManifest() {
       option.textContent = entry.name;
       envSelect.appendChild(option);
     }
-
-    // Select first HDR by default if available
-    if (manifest.length > 0) {
-      envSelect.value = `assets/env/${manifest[0].file}`;
-    }
   } catch (err) {
     console.warn("Could not load HDR manifest:", err);
   }
@@ -2443,6 +2712,8 @@ loadEnvManifest().then(() => {
 
   updateMaterialState();
   updateMaterialVisibility();
+  updateDofVisibility();
+  updateEnvironmentVisibility();
   updateClipState({ preserveLock: true });
   updateRenderLimits();
   updateLightState();
